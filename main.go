@@ -115,11 +115,6 @@ func (d *Directory) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 			}
 		}
 		d.Subdirectories = newDirs
-		if err := db.Client.Delete(d.FullPath + req.Name); err != nil {
-			log.Panicln("Unable to delete item at path", d.FullPath+req.Name, err)
-		}
-
-		return nil
 	} else { // Remove file
 		newFiles := []os.FileInfo{}
 		for _, f := range d.Files {
@@ -128,12 +123,12 @@ func (d *Directory) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 			}
 		}
 		d.Files = newFiles
-		if err := db.Client.Delete(d.FullPath + req.Name); err != nil {
-			log.Panicln("Unable to delete item at path", d.FullPath+req.Name, err)
-		}
-
-		return nil
 	}
+
+	if err := db.Client.Delete(d.FullPath + req.Name); err != nil {
+		log.Panicln("Unable to delete item at path", d.FullPath+req.Name, err)
+	}
+
 	d.LastRefreshed = time.Now()
 	return fuse.ENOENT
 }
