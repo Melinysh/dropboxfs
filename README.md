@@ -16,17 +16,17 @@ export DROPBOX_ACCESS_TOKEN=<Access Token Here>
 ```
 
 ### TODO's
--[x] Read directories
--[x] Read files
--[x] Write files
--[x] Create new files
--[x] Delete files
--[ ] Add backgrounding option
--[ ] Stop spitting out so much debug info
--[ ] Cleanup code
--[ ] Better caching mechanism
--[ ] Detect off-machine Dropbox changes and sync them 
--[ ] Add in better mechanism for getting/generating access tokens
+- [x] Read directories  
+- [x] Read files  
+- [x] Write files  
+- [x] Create new files  
+- [x] Delete files  
+- [ ] Add backgrounding option  
+- [ ] Stop spitting out so much debug info  
+- [ ] Cleanup code  
+- [ ] Better caching mechanism  
+- [ ] Detect off-machine Dropbox changes and sync them   
+- [ ] Add in better mechanism for getting/generating access tokens  
 
 ### License
 MIT License
