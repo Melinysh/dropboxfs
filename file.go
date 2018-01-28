@@ -15,12 +15,14 @@ import (
 
 type File struct {
 	*Node
-	Data []byte
+	Data        []byte
+	NeedsUpload bool
 }
 
 func (f *File) PopulateFile() {
 	if time.Since(f.LastRefreshed) < 5*time.Minute {
 		log.Println("File", f.FullPath, "cached until 5 minutes has passed")
+		return
 	}
 	contents, err := f.Client.Download(f.FullPath)
 	defer contents.Close()
@@ -31,6 +33,7 @@ func (f *File) PopulateFile() {
 	f.Data = data
 	f.Size = uint64(len(data))
 	f.LastRefreshed = time.Now()
+	f.NeedsUpload = false
 }
 
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
@@ -55,16 +58,17 @@ func (f *File) ReadAll(ctx context.Context) ([]byte, error) {
 }
 
 func (f *File) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
-	log.Println("Trying to write to ", f.FullPath, "offset", req.Offset, "dataSize:", len(req.Data), "data: ", string(req.Data))
+	log.Println("Trying to write to ", f.FullPath, "offset", req.Offset, "dataSize:", len(req.Data))
 	resp.Size = len(req.Data)
-	r := bytes.NewReader(req.Data)
-	if err := f.Client.Upload(f.FullPath, r); err != nil {
-		log.Panicln("Unable to upload file", f.FullPath, err)
+	newData := f.Data[:req.Offset]
+	newData = append(newData, req.Data...)
+	if secondOffset := int64(len(req.Data)) + req.Offset; secondOffset < int64(len(f.Data)) {
+		newData = append(newData, f.Data[secondOffset:]...)
 	}
-	f.Data = req.Data
-	f.Size = uint64(len(req.Data))
-	f.LastRefreshed = time.Now()
-	log.Println("Wrote to file", f.FullPath)
+	f.Data = newData
+	f.Size = uint64(len(f.Data))
+	f.NeedsUpload = true
+	log.Println("Wrote to file locally", f.FullPath)
 	return nil
 }
 func (f *File) Flush(ctx context.Context, req *fuse.FlushRequest) error {
@@ -73,11 +77,22 @@ func (f *File) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 }
 func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
 	log.Println("Open call on file", f.FullPath)
+	f.PopulateFile()
 	return f, nil
 }
 
 func (f *File) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 	log.Println("Release requested on file", f.FullPath)
+	if f.NeedsUpload {
+		log.Println("Uploading file to Dropbox", f.FullPath)
+		r := bytes.NewReader(f.Data)
+		if err := f.Client.Upload(f.FullPath, r); err != nil {
+			log.Panicln("Unable to upload file", f.FullPath, err)
+		}
+		f.NeedsUpload = false
+		f.LastRefreshed = time.Now()
+	}
+
 	return nil
 }
 
