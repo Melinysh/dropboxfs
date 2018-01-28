@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"io/ioutil"
 	"log"
-	"time"
 
 	"golang.org/x/net/context"
 
@@ -20,8 +19,8 @@ type File struct {
 }
 
 func (f *File) PopulateFile() {
-	if time.Since(f.LastRefreshed) < 5*time.Minute {
-		log.Println("File", f.FullPath, "cached until 5 minutes has passed")
+	if !f.NeedsSync {
+		log.Println("File", f.FullPath, "cached. Not refreshing it.")
 		return
 	}
 	contents, err := f.Client.Download(f.FullPath)
@@ -32,8 +31,8 @@ func (f *File) PopulateFile() {
 	data, err := ioutil.ReadAll(contents)
 	f.Data = data
 	f.Size = uint64(len(data))
-	f.LastRefreshed = time.Now()
 	f.NeedsUpload = false
+	f.NeedsSync = false
 }
 
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
@@ -90,7 +89,7 @@ func (f *File) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 			log.Panicln("Unable to upload file", f.FullPath, err)
 		}
 		f.NeedsUpload = false
-		f.LastRefreshed = time.Now()
+		f.NeedsSync = false
 	}
 
 	return nil

@@ -2,16 +2,15 @@ package main
 
 import (
 	"os"
-	"time"
 )
 
 type Node struct {
-	Inode         uint64
-	FullPath      string
-	Name          string
-	LastRefreshed time.Time
-	Client        *Dropbox
-	Size          uint64
+	Inode     uint64
+	FullPath  string
+	Name      string
+	Client    *Dropbox
+	Size      uint64
+	NeedsSync bool
 }
 
 func NewNode(info os.FileInfo, parentDir *Directory) *Node {
@@ -20,12 +19,12 @@ func NewNode(info os.FileInfo, parentDir *Directory) *Node {
 		suffix = "/"
 	}
 	return &Node{
-		Inode:         NewInode(),
-		Name:          info.Name(),
-		FullPath:      parentDir.FullPath + info.Name() + suffix,
-		Client:        parentDir.Client,
-		Size:          uint64(info.Size()),
-		LastRefreshed: time.Unix(0, 0),
+		Inode:     NewInode(),
+		Name:      info.Name(),
+		FullPath:  parentDir.FullPath + info.Name() + suffix,
+		Client:    parentDir.Client,
+		Size:      uint64(info.Size()),
+		NeedsSync: true,
 	}
 }
 

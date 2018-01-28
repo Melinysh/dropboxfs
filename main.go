@@ -3,7 +3,6 @@ package main
 import (
 	"log"
 	"os"
-	"time"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
@@ -23,12 +22,19 @@ func main() {
 		log.Println("Must provide mountpoint. Ex: ./dropboxfs ./MyMountPoint")
 		return
 	}
+
+	token := os.Getenv("DROPBOX_ACCESS_TOKEN")
+	if len(token) == 0 {
+		log.Panicln("Please provide DROPBOX_ACCESS_TOKEN environment variable")
+	}
+
 	mountpoint := os.Args[1]
 	log.Println("Will try to mount to mountpoint", mountpoint)
 	c, err := fuse.Mount(mountpoint)
 	if err != nil {
 		log.Fatal("Unable to mount:", err)
 	}
+
 	log.Println("Mount successful!")
 	defer c.Close()
 	<-c.Ready
@@ -40,19 +46,14 @@ func main() {
 		log.Panicln("kernel FUSE support is too old to have invalidations: version %v", p)
 	}
 
-	token := os.Getenv("DROPBOX_ACCESS_TOKEN")
-	if len(token) == 0 {
-		log.Panicln("Please provide DROPBOX_ACCESS_TOKEN environment variable")
-	}
 	client := dropy.New(dropbox.New(dropbox.NewConfig(token)))
 	db := Dropbox{client, &Directory{}}
 	rootDir := Directory{
-		Node: &Node{Inode: 1, FullPath: "/", LastRefreshed: time.Unix(0, 0), Client: &db},
+		Node: &Node{Inode: 1, FullPath: "/", NeedsSync: true, Client: &db},
 	}
 	db.RootDir = &rootDir
 
 	srv := fs.New(c, nil)
-
 	log.Println("Ready to serve FUSE")
 	if err := srv.Serve(db); err != nil {
 		log.Panicln("Unable to serve filesystem:", err)
