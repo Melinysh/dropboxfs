@@ -1,6 +1,6 @@
 # dropboxfs
 
-A [FUSE](https://github.com/libfuse/libfuse) for seamlessly interacting with Dropbox written in Go.  
+A [FUSE](https://github.com/libfuse/libfuse) for seamlessly interacting with Dropbox written in Go. Dropboxfs allows you to mount your Dropbox and use it as if it was a local filesystem. All changes made through dropboxfs will be sync'ed with Dropbox. 
 
 ### How to run it
 
@@ -16,11 +16,15 @@ export DROPBOX_ACCESS_TOKEN=<Access Token Here>
 ```
 
 ### TODO's
-- [x] Read directories  
+- [x] Read directories 
+- [x] Creating directories
+- [x] Removing directories 
 - [x] Read files  
 - [x] Write files  
-- [x] Create new files  
-- [x] Delete files  
+- [x] Create files  
+- [x] Delete files 
+- [x] Copy files
+- [x] Rename files 
 - [ ] Add backgrounding option  
 - [ ] Stop spitting out so much debug info  
 - [ ] Cleanup code  
