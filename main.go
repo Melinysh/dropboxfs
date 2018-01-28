@@ -3,8 +3,6 @@ package main
 import (
 	"log"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"bazil.org/fuse"
@@ -54,21 +52,10 @@ func main() {
 	db.RootDir = &rootDir
 
 	srv := fs.New(c, nil)
-	// Sign-up for signals to end early
-	sigs := make(chan os.Signal, 1)
-	done := make(chan bool, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigs
-		log.Println("Caught SIGTERM")
-		c.Close()
-		done <- true
-	}()
 
 	log.Println("Ready to serve FUSE")
 	if err := srv.Serve(db); err != nil {
 		log.Panicln("Unable to serve filesystem:", err)
 	}
-	<-done
 	log.Println("Shutting down gracefully...")
 }
