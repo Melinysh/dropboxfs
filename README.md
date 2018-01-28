@@ -4,7 +4,7 @@ A [FUSE](https://github.com/libfuse/libfuse) for seamlessly interacting with Dro
 
 ### How to run it
 
-[Register an app with Dropbox](https://www.dropbox.com/developers/apps) and generate an access token for dropboxfs to use.
+[Register an app with Dropbox](https://www.dropbox.com/developers/apps) and generate an access token for dropboxfs to use. Make sure your system has [FUSE](https://github.com/libfuse/libfuse) installed.
 
 ```
 git clone https://github.com/Melinysh/dropboxfs.git
@@ -19,6 +19,7 @@ export DROPBOX_ACCESS_TOKEN=<Access Token Here>
 - [x] Read directories 
 - [x] Creating directories
 - [x] Removing directories 
+- [x] Moving directories   
 - [x] Read files  
 - [x] Write files  
 - [x] Create files  
