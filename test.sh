@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# To run this, make sure you have dropboxfs already running.
+
 MOUNTPOINT=test
 
 echo "Runnning tests"
