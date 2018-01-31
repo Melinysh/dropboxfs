@@ -2,122 +2,127 @@ package main
 
 import (
 	"bytes"
+	"hash/fnv"
 	"io/ioutil"
+	"log"
 
 	"bazil.org/fuse/fs"
-	"github.com/tj/go-dropbox"
+	"github.com/dropbox/dropbox-sdk-go-unofficial/dropbox"
+	"github.com/dropbox/dropbox-sdk-go-unofficial/dropbox/files"
 )
 
 type Dropbox struct {
-	fileClient *dropbox.Files
+	fileClient files.Client
 	RootDir    *Directory
+}
+
+func Inode(s string) uint64 {
+	h := fnv.New32a()
+	h.Write([]byte(s))
+	return uint64(h.Sum32())
 }
 
 func (db Dropbox) Root() (fs.Node, error) {
 	return db.RootDir, nil
 }
 
-func (db *Dropbox) fetchFolders(path string, files bool) ([]*Node, error) {
-	nodes := []*Node{}
-
-	input := dropbox.ListFolderInput{path, false, true, false}
-	output, err := db.fileClient.ListFolder(&input)
+func (db *Dropbox) fetchItems(path string) ([]files.IsMetadata, error) {
+	nodes := []files.IsMetadata{}
+	log.Println("Looking up items for path", path)
+	input := files.NewListFolderArg(path)
+	output, err := db.fileClient.ListFolder(input)
 	if err != nil {
 		return nodes, err
 	}
 
 	for _, entry := range output.Entries {
-		if files && entry.Tag == "folder" {
-			continue
-		}
-
-		if !files && entry.Tag != "folder" {
-			continue
-		}
-
-		nodes = append(nodes, &Node{*entry, NewInode(), db, true})
+		nodes = append(nodes, entry)
 	}
 
 	for output.HasMore {
-		nextInput := dropbox.ListFolderContinueInput{output.Cursor}
-		output, err = db.fileClient.ListFolderContinue(&nextInput)
+		log.Println("Going for another round of fetching for path", path)
+		nextInput := files.NewListFolderContinueArg(output.Cursor)
+		output, err = db.fileClient.ListFolderContinue(nextInput)
 		if err != nil {
 			return nodes, err
 		}
 		for _, entry := range output.Entries {
-			if files && entry.Tag == "folder" {
-				continue
-			}
-
-			if !files && entry.Tag != "folder" {
-				continue
-			}
-
-			nodes = append(nodes, &Node{*entry, NewInode(), db, true})
-
+			nodes = append(nodes, entry)
 		}
 	}
 	// TODO: something with cursors for syncing
 	return nodes, nil
 }
 
-func (db *Dropbox) ListFiles(path string) ([]*Node, error) {
-	return db.fetchFolders(path, true)
+func (db *Dropbox) ListFiles(path string) ([]*files.FileMetadata, error) {
+	out, err := db.fetchItems(path)
+	filesMetadata := []*files.FileMetadata{}
+	for _, metadata := range out {
+		m, ok := (metadata).(*files.FileMetadata)
+		if ok {
+			log.Println("Adding file", m.Name)
+			filesMetadata = append(filesMetadata, m)
+		} else {
+			log.Println("Skipping folder")
+		}
+	}
+	return filesMetadata, err
+
 }
 
-func (db *Dropbox) ListFolders(path string) ([]*Node, error) {
-	return db.fetchFolders(path, false)
+func (db *Dropbox) ListFolders(path string) ([]*files.FolderMetadata, error) {
+	out, err := db.fetchItems(path)
+	folderMetadata := []*files.FolderMetadata{}
+	for _, metadata := range out {
+		m, ok := (metadata).(*files.FolderMetadata)
+		if ok {
+			log.Println("Adding folder", m.Name)
+			folderMetadata = append(folderMetadata, m)
+		} else {
+
+			log.Println("Skipping file")
+		}
+	}
+	return folderMetadata, err
 }
 
-func (db *Dropbox) Upload(path string, data []byte) (dropbox.Metadata, error) {
+func (db *Dropbox) Upload(path string, data []byte) (*files.FileMetadata, error) {
 	r := bytes.NewReader(data)
-	input := dropbox.UploadInput{
-		path,
-		dropbox.WriteModeOverwrite,
-		false,
-		false,
-		"",
-		r,
-	}
-	output, err := db.fileClient.Upload(&input)
-	if err != nil {
-		return dropbox.Metadata{}, err
-	}
-	return output.Metadata, nil
+	input := files.NewCommitInfo(path)
+	input.Mode = &files.WriteMode{Tagged: dropbox.Tagged{"overwrite"}}
+	return db.fileClient.Upload(input, r)
 }
 
-func (db *Dropbox) Move(oldPath string, newPath string) (dropbox.Metadata, error) {
-	input := dropbox.MoveInput{oldPath, newPath}
-	output, err := db.fileClient.Move(&input)
+func (db *Dropbox) Move(oldPath string, newPath string) (*files.IsMetadata, error) {
+	input := files.NewRelocationArg(oldPath, newPath)
+	output, err := db.fileClient.Move(input)
 	if err != nil {
-		return dropbox.Metadata{}, err
+		return nil, err
 	}
-	return output.Metadata, nil
-
+	return &output, nil
 }
 
-func (db *Dropbox) Delete(path string) (dropbox.Metadata, error) {
-	input := dropbox.DeleteInput{path}
-	output, err := db.fileClient.Delete(&input)
+func (db *Dropbox) Delete(path string) (*files.IsMetadata, error) {
+	input := files.NewDeleteArg(path)
+	output, err := db.fileClient.Delete(input)
 	if err != nil {
-		return dropbox.Metadata{}, err
+		return nil, err
 	}
-	return output.Metadata, nil
+	return &output, nil
 
 }
 
-func (db *Dropbox) Mkdir(path string) error {
-	input := dropbox.CreateFolderInput{path}
-	_, err := db.fileClient.CreateFolder(&input)
-	return err
+func (db *Dropbox) Mkdir(path string) (*files.FolderMetadata, error) {
+	input := files.NewCreateFolderArg(path)
+	return db.fileClient.CreateFolder(input)
 }
 
 func (db *Dropbox) Download(path string) ([]byte, error) {
-	input := dropbox.DownloadInput{path}
-	output, err := db.fileClient.Download(&input)
+	input := files.NewDownloadArg(path)
+	_, content, err := db.fileClient.Download(input)
 	if err != nil {
 		return []byte{}, err
 	}
-	defer output.Body.Close()
-	return ioutil.ReadAll(output.Body)
+	defer content.Close()
+	return ioutil.ReadAll(content)
 }

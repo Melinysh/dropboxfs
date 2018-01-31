@@ -6,7 +6,8 @@ import (
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
-	dropbox "github.com/tj/go-dropbox"
+	dropbox "github.com/dropbox/dropbox-sdk-go-unofficial/dropbox"
+	"github.com/dropbox/dropbox-sdk-go-unofficial/dropbox/files"
 )
 
 var inodeCounter uint64 = 0
@@ -45,10 +46,16 @@ func main() {
 		log.Panicln("kernel FUSE support is too old to have invalidations: version %v", p)
 	}
 
-	client := dropbox.NewFiles(dropbox.NewConfig(token))
+	config := dropbox.Config{
+		Token: token,
+		//	LogLevel: LogInfo,
+	}
+	client := files.New(config)
 	db := Dropbox{client, &Directory{}}
 	rootDir := Directory{
-		Node: &Node{Metadata: dropbox.Metadata{Name: "Root", PathDisplay: ""}, Inode: 1, NeedsSync: true, Client: &db},
+		Metadata: &files.FolderMetadata{Metadata: files.Metadata{Name: "Root", PathDisplay: ""}},
+		Cached:   false,
+		Client:   &db,
 	}
 	db.RootDir = &rootDir
 
