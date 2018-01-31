@@ -38,7 +38,6 @@ func (d *Directory) PopulateDirectory() {
 
 func (d *Directory) Attr(ctx context.Context, a *fuse.Attr) error {
 	log.Println("Requested Attr for Directory", d.FullPath)
-	d.PopulateDirectory()
 	a.Inode = d.Inode
 	a.Mode = os.ModeDir | 0700
 	return nil
