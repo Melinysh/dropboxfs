@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"io/ioutil"
 	"log"
 
 	"golang.org/x/net/context"
@@ -20,15 +18,13 @@ type File struct {
 
 func (f *File) PopulateFile() {
 	if !f.NeedsSync {
-		log.Println("File", f.FullPath, "cached. Not refreshing it.")
+		log.Println("File", f.PathDisplay, "cached. Not refreshing it.")
 		return
 	}
-	contents, err := f.Client.Download(f.FullPath)
-	defer contents.Close()
+	data, err := f.Client.Download(f.PathDisplay)
 	if err != nil {
-		log.Panicln("Unable to download file", f.FullPath, err)
+		log.Panicln("Unable to download file", f.PathDisplay, err)
 	}
-	data, err := ioutil.ReadAll(contents)
 	f.Data = data
 	f.Size = uint64(len(data))
 	f.NeedsUpload = false
@@ -36,7 +32,7 @@ func (f *File) PopulateFile() {
 }
 
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
-	log.Println("Requested Attr for File", f.FullPath)
+	log.Println("Requested Attr for File", f.PathDisplay)
 	a.Inode = f.Inode
 	a.Mode = 0700
 	a.Size = f.Size
@@ -44,20 +40,20 @@ func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
 }
 
 func (f *File) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
-	log.Println("Requested Read on File", f.FullPath)
+	log.Println("Requested Read on File", f.PathDisplay)
 	f.PopulateFile()
 	fuseutil.HandleRead(req, resp, f.Data)
 	return nil
 }
 
 func (f *File) ReadAll(ctx context.Context) ([]byte, error) {
-	log.Println("Reading all of file", f.FullPath)
+	log.Println("Reading all of file", f.PathDisplay)
 	f.PopulateFile()
 	return f.Data, nil
 }
 
 func (f *File) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
-	log.Println("Trying to write to ", f.FullPath, "offset", req.Offset, "dataSize:", len(req.Data))
+	log.Println("Trying to write to ", f.PathDisplay, "offset", req.Offset, "dataSize:", len(req.Data))
 	resp.Size = len(req.Data)
 	newData := f.Data[:req.Offset]
 	newData = append(newData, req.Data...)
@@ -67,27 +63,28 @@ func (f *File) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.Wri
 	f.Data = newData
 	f.Size = uint64(len(f.Data))
 	f.NeedsUpload = true
-	log.Println("Wrote to file locally", f.FullPath)
+	log.Println("Wrote to file locally", f.PathDisplay)
 	return nil
 }
 func (f *File) Flush(ctx context.Context, req *fuse.FlushRequest) error {
-	log.Println("Flushing file", f.FullPath)
+	log.Println("Flushing file", f.PathDisplay)
 	return nil
 }
 func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
-	log.Println("Open call on file", f.FullPath)
+	log.Println("Open call on file", f.PathDisplay)
 	f.PopulateFile()
 	return f, nil
 }
 
 func (f *File) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
-	log.Println("Release requested on file", f.FullPath)
+	log.Println("Release requested on file", f.PathDisplay)
 	if f.NeedsUpload {
-		log.Println("Uploading file to Dropbox", f.FullPath)
-		r := bytes.NewReader(f.Data)
-		if err := f.Client.Upload(f.FullPath, r); err != nil {
-			log.Panicln("Unable to upload file", f.FullPath, err)
+		log.Println("Uploading file to Dropbox", f.PathDisplay)
+		metadata, err := f.Client.Upload(f.PathDisplay, f.Data)
+		if err != nil {
+			log.Panicln("Unable to upload file", f.PathDisplay, err)
 		}
+		f.Metadata = metadata
 		f.NeedsUpload = false
 		f.NeedsSync = false
 	}
@@ -96,6 +93,6 @@ func (f *File) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 }
 
 func (f *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
-	log.Println("Fsync call on file", f.FullPath)
+	log.Println("Fsync call on file", f.PathDisplay)
 	return nil
 }

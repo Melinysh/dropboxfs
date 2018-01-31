@@ -1,9 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"log"
 	"os"
+
+	dropbox "github.com/tj/go-dropbox"
 
 	"golang.org/x/net/context"
 
@@ -19,25 +20,25 @@ type Directory struct {
 
 func (d *Directory) PopulateDirectory() {
 	if !d.NeedsSync {
-		log.Println("Directory", d.FullPath, "cached. Not fetching.")
+		log.Println("Directory", d.PathDisplay, "cached. Not fetching.")
 		return
 	}
-	files, err := d.Client.ListFiles(d.FullPath)
+	files, err := d.Client.ListFiles(d.PathDisplay)
 	if err != nil {
-		log.Panicln("Unable to load directories at path", d.FullPath)
+		log.Panicln("Unable to load directories at path", d.PathDisplay)
 	}
-	folders, err := d.Client.ListFolders(d.FullPath)
+	folders, err := d.Client.ListFolders(d.PathDisplay)
 	if err != nil {
-		log.Panicln("Unable to load files at path", d.FullPath)
+		log.Panicln("Unable to load files at path", d.PathDisplay)
 	}
-	d.Files = NewNodes(files, d)
-	d.Subdirectories = NewNodes(folders, d)
+	d.Files = files
+	d.Subdirectories = folders
 	d.NeedsSync = false
-	log.Println("Populated directory at path", d.FullPath)
+	log.Println("Populated directory at path", d.PathDisplay)
 }
 
 func (d *Directory) Attr(ctx context.Context, a *fuse.Attr) error {
-	log.Println("Requested Attr for Directory", d.FullPath)
+	log.Println("Requested Attr for Directory", d.PathDisplay)
 	a.Inode = d.Inode
 	a.Mode = os.ModeDir | 0700
 	return nil
@@ -75,7 +76,7 @@ func (d *Directory) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	for _, dir := range d.Subdirectories {
 		children = append(children, fuse.Dirent{Inode: dir.Inode, Type: fuse.DT_Dir, Name: dir.Name})
 	}
-	log.Println(len(children), " children for dir", d.FullPath)
+	log.Println(len(children), " children for dir", d.PathDisplay)
 	return children, nil
 }
 
@@ -83,17 +84,17 @@ func (d *Directory) Create(ctx context.Context, req *fuse.CreateRequest, resp *f
 	log.Println("Create request for name", req.Name)
 	newFile := File{
 		Node: &Node{
-			Inode:     NewInode(),
-			FullPath:  d.FullPath + req.Name,
-			NeedsSync: false,
-			Name:      req.Name,
-			Client:    d.Client,
+			dropbox.Metadata{Name: req.Name, PathDisplay: d.PathDisplay + "/" + req.Name},
+			NewInode(),
+			d.Client,
+			false,
 		},
 	}
-	r := bytes.NewReader([]byte{}) // empty
-	if err := d.Client.Upload(newFile.FullPath, r); err != nil {
-		log.Panicln("Unable to create file ", newFile.FullPath, err)
+	fileMetadata, err := d.Client.Upload(newFile.PathDisplay, []byte{})
+	if err != nil {
+		log.Panicln("Unable to create file ", newFile.PathDisplay, err)
 	}
+	newFile.Node.Metadata = fileMetadata
 	d.Files = append(d.Files, newFile.Node)
 	return &newFile, &newFile, nil
 }
@@ -127,9 +128,9 @@ func (d *Directory) Rename(ctx context.Context, req *fuse.RenameRequest, newDir 
 
 		d.Subdirectories = newDirs
 		movingDir.Name = req.NewName
-		oldPath = movingDir.FullPath[:len(movingDir.FullPath)-1]
-		movingDir.FullPath = newParentDir.FullPath + req.NewName + "/"
-		newPath = newParentDir.FullPath + req.NewName
+		oldPath = movingDir.PathDisplay[:len(movingDir.PathDisplay)-1]
+		movingDir.PathDisplay = newParentDir.PathDisplay + "/" + req.NewName
+		newPath = newParentDir.PathDisplay + req.NewName
 		newParentDir.Subdirectories = append(newParentDir.Subdirectories, movingDir)
 		movingDir.NeedsSync = true
 	} else { // Remove file
@@ -144,16 +145,17 @@ func (d *Directory) Rename(ctx context.Context, req *fuse.RenameRequest, newDir 
 		}
 		d.Files = newFiles
 		movingFile.Name = req.NewName
-		oldPath = movingFile.FullPath
-		movingFile.FullPath = newParentDir.FullPath + req.NewName
-		newPath = movingFile.FullPath
+		oldPath = movingFile.PathDisplay
+		movingFile.PathDisplay = newParentDir.PathDisplay + "/" + req.NewName
+		newPath = movingFile.PathDisplay
 		newParentDir.Files = append(newParentDir.Files, movingFile)
 		movingFile.NeedsSync = true
 	}
 	newParentDir.NeedsSync = true
 	d.NeedsSync = true
 
-	if err := d.Client.Move(oldPath, newPath); err != nil {
+	_, err := d.Client.Move(oldPath, newPath)
+	if err != nil {
 		log.Panicln("Unable to move form oldPath", oldPath, "to new path", newPath, err)
 	}
 
@@ -179,9 +181,9 @@ func (d *Directory) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 		}
 		d.Files = newFiles
 	}
-
-	if err := d.Client.Delete(d.FullPath + req.Name); err != nil {
-		log.Panicln("Unable to delete item at path", d.FullPath+req.Name, err)
+	_, err := d.Client.Delete(d.PathDisplay + "/" + req.Name)
+	if err != nil {
+		log.Panicln("Unable to delete item at path", d.PathDisplay+"/"+req.Name, err)
 	}
 
 	return nil
@@ -189,20 +191,18 @@ func (d *Directory) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 
 func (d *Directory) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
 	log.Println("Mkdir request for name", req.Name)
+
+	if err := d.Client.Mkdir(d.PathDisplay + req.Name); err != nil {
+		log.Panicln("Unable to create new directory at path", d.PathDisplay+req.Name, err)
+	}
 	newDir := Directory{
 		Node: &Node{
+			Metadata:  dropbox.Metadata{Name: req.Name, PathDisplay: d.PathDisplay + "/" + req.Name},
 			Inode:     NewInode(),
-			Name:      req.Name,
-			FullPath:  d.FullPath + req.Name + "/",
 			NeedsSync: false,
 			Client:    d.Client,
 		},
 	}
-
-	if err := d.Client.Mkdir(d.FullPath + req.Name); err != nil {
-		log.Panicln("Unable to create new directory at path", newDir.FullPath, err)
-	}
-
 	d.Subdirectories = append(d.Subdirectories, newDir.Node)
 	return &newDir, nil
 }
