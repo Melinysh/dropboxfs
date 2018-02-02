@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"sync"
 
 	"github.com/dropbox/dropbox-sdk-go-unofficial/dropbox/files"
 
@@ -18,9 +19,11 @@ type Directory struct {
 	Files          []*files.FileMetadata
 	Client         *Dropbox
 	Cached         bool
+	sync.Mutex
 }
 
-func (d *Directory) PopulateDirectory() {
+// lock assumed
+func (d *Directory) populateDirectory() {
 	if d.Cached {
 		log.Println("Directory", d.Metadata.PathDisplay, "cached. Not fetching.")
 		return
@@ -33,14 +36,15 @@ func (d *Directory) PopulateDirectory() {
 	if err != nil {
 		log.Panicln("Unable to load files at path", d.Metadata.PathDisplay)
 	}
-	log.Println("Added ", len(files), " files and ", len(folders), " folders to d", d.Metadata.Name)
 	d.Files = files
 	d.Subdirectories = folders
 	d.Cached = true
-	log.Println("Populated directory at path", d.Metadata.PathDisplay)
+	log.Println("populated directory at path", d.Metadata.PathDisplay)
 }
 
 func (d *Directory) Attr(ctx context.Context, a *fuse.Attr) error {
+	d.Lock()
+	defer d.Unlock()
 	log.Println("Requested Attr for Directory", d.Metadata.PathDisplay)
 	a.Inode = Inode(d.Metadata.Id)
 	a.Mode = os.ModeDir | 0700
@@ -48,8 +52,10 @@ func (d *Directory) Attr(ctx context.Context, a *fuse.Attr) error {
 }
 
 func (d *Directory) Lookup(ctx context.Context, name string) (fs.Node, error) {
+	d.Lock()
+	defer d.Unlock()
 	log.Println("Requested lookup for ", name)
-	d.PopulateDirectory()
+	d.populateDirectory()
 	for _, n := range d.Files {
 		if n.Metadata.Name == name {
 			log.Println("Found match for file lookup with size", n.Size)
@@ -72,8 +78,10 @@ func (d *Directory) Lookup(ctx context.Context, name string) (fs.Node, error) {
 }
 
 func (d *Directory) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
-	log.Println("Reading all dirs")
-	d.PopulateDirectory()
+	d.Lock()
+	defer d.Unlock()
+	log.Println("Reading all dir", d.Metadata.PathDisplay)
+	d.populateDirectory()
 	var children []fuse.Dirent
 	for _, f := range d.Files {
 		children = append(children, fuse.Dirent{Inode: Inode(f.Id), Type: fuse.DT_File, Name: f.Metadata.Name})
@@ -81,11 +89,12 @@ func (d *Directory) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	for _, dir := range d.Subdirectories {
 		children = append(children, fuse.Dirent{Inode: Inode(dir.Id), Type: fuse.DT_Dir, Name: dir.Metadata.Name})
 	}
-	log.Println(len(children), " children for dir", d.Metadata.PathDisplay)
 	return children, nil
 }
 
 func (d *Directory) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (fs.Node, fs.Handle, error) {
+	d.Lock()
+	defer d.Unlock()
 	log.Println("Create request for name", req.Name)
 
 	fileMetadata, err := d.Client.Upload(d.Metadata.PathDisplay+"/"+req.Name, []byte{})
@@ -102,6 +111,8 @@ func (d *Directory) Create(ctx context.Context, req *fuse.CreateRequest, resp *f
 }
 
 func (d *Directory) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fs.Node) error {
+	d.Lock()
+	defer d.Unlock()
 	log.Println("Rename request for", req.OldName, "to", req.NewName)
 	newParentDir, _ := newDir.(*Directory)
 
@@ -163,6 +174,8 @@ func (d *Directory) Rename(ctx context.Context, req *fuse.RenameRequest, newDir 
 }
 
 func (d *Directory) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
+	d.Lock()
+	defer d.Unlock()
 	log.Println("Remove request for ", req.Name)
 	if req.Dir {
 		newDirs := []*files.FolderMetadata{}
@@ -190,6 +203,8 @@ func (d *Directory) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 }
 
 func (d *Directory) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
+	d.Lock()
+	defer d.Unlock()
 	log.Println("Mkdir request for name", req.Name)
 	folderMetadata, err := d.Client.Mkdir(d.Metadata.PathDisplay + "/" + req.Name)
 	if err != nil {

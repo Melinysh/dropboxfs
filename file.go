@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"sync"
 
 	"github.com/dropbox/dropbox-sdk-go-unofficial/dropbox/files"
 
@@ -18,9 +19,11 @@ type File struct {
 	NeedsUpload bool
 	Client      *Dropbox
 	Cached      bool
+	sync.Mutex
 }
 
-func (f *File) PopulateFile() {
+// Lock assumed
+func (f *File) populateFile() {
 	if f.Cached {
 		log.Println("File", f.Metadata.PathDisplay, "cached. Not refreshing it.")
 		return
@@ -36,6 +39,8 @@ func (f *File) PopulateFile() {
 }
 
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
+	f.Lock()
+	defer f.Unlock()
 	log.Println("Requested Attr for File", f.Metadata.PathDisplay)
 	a.Inode = Inode(f.Metadata.Id)
 	a.Mode = 0700
@@ -44,19 +49,25 @@ func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
 }
 
 func (f *File) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
+	f.Lock()
+	defer f.Unlock()
 	log.Println("Requested Read on File", f.Metadata.PathDisplay)
-	f.PopulateFile()
+	f.populateFile()
 	fuseutil.HandleRead(req, resp, f.Data)
 	return nil
 }
 
 func (f *File) ReadAll(ctx context.Context) ([]byte, error) {
+	f.Lock()
+	defer f.Unlock()
 	log.Println("Reading all of file", f.Metadata.PathDisplay)
-	f.PopulateFile()
+	f.populateFile()
 	return f.Data, nil
 }
 
 func (f *File) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
+	f.Lock()
+	defer f.Unlock()
 	log.Println("Trying to write to ", f.Metadata.PathDisplay, "offset", req.Offset, "dataSize:", len(req.Data))
 	resp.Size = len(req.Data)
 	newData := f.Data[:req.Offset]
@@ -71,16 +82,22 @@ func (f *File) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.Wri
 	return nil
 }
 func (f *File) Flush(ctx context.Context, req *fuse.FlushRequest) error {
+	f.Lock()
+	defer f.Unlock()
 	log.Println("Flushing file", f.Metadata.PathDisplay)
 	return nil
 }
 func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
+	f.Lock()
+	defer f.Unlock()
 	log.Println("Open call on file", f.Metadata.PathDisplay)
-	f.PopulateFile()
+	f.populateFile()
 	return f, nil
 }
 
 func (f *File) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
+	f.Lock()
+	defer f.Unlock()
 	log.Println("Release requested on file", f.Metadata.PathDisplay)
 	if f.NeedsUpload {
 		log.Println("Uploading file to Dropbox", f.Metadata.PathDisplay)
@@ -97,6 +114,8 @@ func (f *File) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 }
 
 func (f *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
+	f.Lock()
+	defer f.Unlock()
 	log.Println("Fsync call on file", f.Metadata.PathDisplay)
 	return nil
 }

@@ -3,19 +3,13 @@ package main
 import (
 	"log"
 	"os"
+	"sync"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	dropbox "github.com/dropbox/dropbox-sdk-go-unofficial/dropbox"
 	"github.com/dropbox/dropbox-sdk-go-unofficial/dropbox/files"
 )
-
-var inodeCounter uint64 = 0
-
-func NewInode() uint64 {
-	inodeCounter += 1
-	return inodeCounter
-}
 
 func main() {
 	if len(os.Args) != 2 {
@@ -51,7 +45,7 @@ func main() {
 		//	LogLevel: LogInfo,
 	}
 	client := files.New(config)
-	db := Dropbox{client, &Directory{}}
+	db := Dropbox{client, &Directory{}, sync.Mutex{}}
 	rootDir := Directory{
 		Metadata: &files.FolderMetadata{Metadata: files.Metadata{Name: "Root", PathDisplay: ""}},
 		Cached:   false,

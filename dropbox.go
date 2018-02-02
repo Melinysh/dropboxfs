@@ -5,6 +5,7 @@ import (
 	"hash/fnv"
 	"io/ioutil"
 	"log"
+	"sync"
 
 	"bazil.org/fuse/fs"
 	"github.com/dropbox/dropbox-sdk-go-unofficial/dropbox"
@@ -14,6 +15,7 @@ import (
 type Dropbox struct {
 	fileClient files.Client
 	RootDir    *Directory
+	sync.Mutex
 }
 
 func Inode(s string) uint64 {
@@ -23,6 +25,8 @@ func Inode(s string) uint64 {
 }
 
 func (db Dropbox) Root() (fs.Node, error) {
+	db.Lock()
+	defer db.Unlock()
 	return db.RootDir, nil
 }
 
@@ -55,6 +59,8 @@ func (db *Dropbox) fetchItems(path string) ([]files.IsMetadata, error) {
 }
 
 func (db *Dropbox) ListFiles(path string) ([]*files.FileMetadata, error) {
+	db.Lock()
+	defer db.Unlock()
 	out, err := db.fetchItems(path)
 	filesMetadata := []*files.FileMetadata{}
 	for _, metadata := range out {
@@ -71,6 +77,8 @@ func (db *Dropbox) ListFiles(path string) ([]*files.FileMetadata, error) {
 }
 
 func (db *Dropbox) ListFolders(path string) ([]*files.FolderMetadata, error) {
+	db.Lock()
+	defer db.Unlock()
 	out, err := db.fetchItems(path)
 	folderMetadata := []*files.FolderMetadata{}
 	for _, metadata := range out {
@@ -87,6 +95,8 @@ func (db *Dropbox) ListFolders(path string) ([]*files.FolderMetadata, error) {
 }
 
 func (db *Dropbox) Upload(path string, data []byte) (*files.FileMetadata, error) {
+	db.Lock()
+	defer db.Unlock()
 	r := bytes.NewReader(data)
 	input := files.NewCommitInfo(path)
 	input.Mode = &files.WriteMode{Tagged: dropbox.Tagged{"overwrite"}}
@@ -95,6 +105,8 @@ func (db *Dropbox) Upload(path string, data []byte) (*files.FileMetadata, error)
 
 func (db *Dropbox) Move(oldPath string, newPath string) (*files.IsMetadata, error) {
 	input := files.NewRelocationArg(oldPath, newPath)
+	db.Lock()
+	defer db.Unlock()
 	output, err := db.fileClient.Move(input)
 	if err != nil {
 		return nil, err
@@ -103,6 +115,8 @@ func (db *Dropbox) Move(oldPath string, newPath string) (*files.IsMetadata, erro
 }
 
 func (db *Dropbox) Delete(path string) (*files.IsMetadata, error) {
+	db.Lock()
+	defer db.Unlock()
 	input := files.NewDeleteArg(path)
 	output, err := db.fileClient.Delete(input)
 	if err != nil {
@@ -113,11 +127,15 @@ func (db *Dropbox) Delete(path string) (*files.IsMetadata, error) {
 }
 
 func (db *Dropbox) Mkdir(path string) (*files.FolderMetadata, error) {
+	db.Lock()
+	defer db.Unlock()
 	input := files.NewCreateFolderArg(path)
 	return db.fileClient.CreateFolder(input)
 }
 
 func (db *Dropbox) Download(path string) ([]byte, error) {
+	db.Lock()
+	defer db.Unlock()
 	input := files.NewDownloadArg(path)
 	_, content, err := db.fileClient.Download(input)
 	if err != nil {
