@@ -30,7 +30,7 @@ export DROPBOX_ACCESS_TOKEN=<Access Token Here>
 - [ ] Stop spitting out so much debug info  
 - [ ] Cleanup code  
 - [ ] Better caching mechanism  
-- [ ] Detect off-machine Dropbox changes and sync them ([Webhooks](https://www.dropbox.com/developers/reference/webhooks)?)  
+- [ ] Detect off-machine Dropbox changes and sync them ([~Webhooks~](https://www.dropbox.com/developers/reference/webhooks), [Longpoll](https://www.dropbox.com/developers/documentation/http/documentation#files-list_folder-longpoll))  
 - [ ] Add in better mechanism for getting/generating access tokens 
 - [x] Add tests 
 
