@@ -29,10 +29,12 @@ export DROPBOX_ACCESS_TOKEN=<Access Token Here>
 - [ ] Add backgrounding option  
 - [ ] Stop spitting out so much debug info  
 - [ ] Cleanup code  
-- [ ] Better caching mechanism  
+- [x] Better caching mechanism 
+- [ ] Time based cache eviction?   
 - [ ] Detect off-machine Dropbox changes and sync them ([~Webhooks~](https://www.dropbox.com/developers/reference/webhooks), [Longpoll](https://www.dropbox.com/developers/documentation/http/documentation#files-list_folder-longpoll))  
 - [ ] Add in better mechanism for getting/generating access tokens 
-- [x] Add tests 
+- [x] Add tests   
+- [ ] Allow for changing of permissions  
 
 ### License
 MIT License

@@ -17,25 +17,22 @@ type File struct {
 	Metadata    *files.FileMetadata
 	Data        []byte
 	NeedsUpload bool
-	Client      *Dropbox
-	Cached      bool
 	sync.Mutex
 }
 
 // Lock assumed
 func (f *File) populateFile() {
-	if f.Cached {
+	if db.IsFileCached(f) {
 		log.Println("File", f.Metadata.PathDisplay, "cached. Not refreshing it.")
 		return
 	}
-	data, err := f.Client.Download(f.Metadata.PathDisplay)
+	data, err := db.Download(f.Metadata.PathDisplay)
 	if err != nil {
 		log.Panicln("Unable to download file", f.Metadata.PathDisplay, err)
 	}
 	f.Data = data
 	f.Metadata.Size = uint64(len(data))
 	f.NeedsUpload = false
-	f.Cached = true
 }
 
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
@@ -101,13 +98,11 @@ func (f *File) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 	log.Println("Release requested on file", f.Metadata.PathDisplay)
 	if f.NeedsUpload {
 		log.Println("Uploading file to Dropbox", f.Metadata.PathDisplay)
-		metadata, err := f.Client.Upload(f.Metadata.PathDisplay, f.Data)
+		_, err := db.Upload(f.Metadata.PathDisplay, f.Data)
 		if err != nil {
 			log.Panicln("Unable to upload file", f.Metadata.PathDisplay, err)
 		}
-		f.Metadata = metadata
 		f.NeedsUpload = false
-		f.Cached = true
 	}
 
 	return nil

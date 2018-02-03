@@ -15,6 +15,9 @@ import (
 type Dropbox struct {
 	fileClient files.Client
 	RootDir    *Directory
+	cache      map[string][]*files.Metadata
+	fileLookup map[string]*File
+	dirLookup  map[string]*Directory
 	sync.Mutex
 }
 
@@ -30,6 +33,45 @@ func (db Dropbox) Root() (fs.Node, error) {
 	return db.RootDir, nil
 }
 
+func (db *Dropbox) IsFileCached(f *File) bool {
+	db.Lock()
+	defer db.Unlock()
+	_, found := db.fileLookup[f.Metadata.PathDisplay]
+	return found
+}
+
+func (db *Dropbox) NewOrCachedFile(metadata *files.FileMetadata) *File {
+	db.Lock()
+	defer db.Unlock()
+	f, found := db.fileLookup[metadata.PathDisplay]
+	if found {
+		return f
+	}
+	return &File{
+		Metadata: metadata,
+	}
+}
+
+func (db *Dropbox) IsDirectoryCached(d *Directory) bool {
+	db.Lock()
+	defer db.Unlock()
+	_, found := db.dirLookup[d.Metadata.PathDisplay]
+	return found
+}
+
+func (db *Dropbox) NewOrCachedDirectory(metadata *files.FolderMetadata) *Directory {
+	db.Lock()
+	defer db.Unlock()
+	dir, found := db.dirLookup[metadata.PathDisplay]
+	if found {
+		return dir
+	}
+	return &Directory{
+		Metadata: metadata,
+	}
+}
+
+// lock assumed
 func (db *Dropbox) fetchItems(path string) ([]files.IsMetadata, error) {
 	nodes := []files.IsMetadata{}
 	log.Println("Looking up items for path", path)
@@ -39,12 +81,21 @@ func (db *Dropbox) fetchItems(path string) ([]files.IsMetadata, error) {
 		return nodes, err
 	}
 
+	metadata := []*files.Metadata{}
 	for _, entry := range output.Entries {
 		nodes = append(nodes, entry)
+		if fileMetadata, isFile := entry.(*files.FileMetadata); isFile {
+			metadata = append(metadata, &fileMetadata.Metadata)
+		} else {
+			folderMetadata := entry.(*files.FolderMetadata)
+			metadata = append(metadata, &folderMetadata.Metadata)
+		}
 	}
+	db.cache[output.Cursor] = metadata
 
 	for output.HasMore {
 		log.Println("Going for another round of fetching for path", path)
+		metadata := []*files.Metadata{}
 		nextInput := files.NewListFolderContinueArg(output.Cursor)
 		output, err = db.fileClient.ListFolderContinue(nextInput)
 		if err != nil {
@@ -52,13 +103,25 @@ func (db *Dropbox) fetchItems(path string) ([]files.IsMetadata, error) {
 		}
 		for _, entry := range output.Entries {
 			nodes = append(nodes, entry)
+			if fileMetadata, isFile := entry.(*files.FileMetadata); isFile {
+				metadata = append(metadata, &fileMetadata.Metadata)
+			} else {
+				folderMetadata := entry.(*files.FolderMetadata)
+				metadata = append(metadata, &folderMetadata.Metadata)
+			}
 		}
+		db.cache[output.Cursor] = metadata
 	}
-	// TODO: something with cursors for syncing
+
+	if _, found := db.dirLookup[db.RootDir.Metadata.PathDisplay]; !found {
+		db.dirLookup[db.RootDir.Metadata.PathDisplay] = db.RootDir
+	}
+
 	return nodes, nil
 }
 
-func (db *Dropbox) ListFiles(path string) ([]*files.FileMetadata, error) {
+func (db *Dropbox) ListFiles(d *Directory) ([]*files.FileMetadata, error) {
+	path := d.Metadata.PathDisplay
 	db.Lock()
 	defer db.Unlock()
 	out, err := db.fetchItems(path)
@@ -66,17 +129,15 @@ func (db *Dropbox) ListFiles(path string) ([]*files.FileMetadata, error) {
 	for _, metadata := range out {
 		m, ok := (metadata).(*files.FileMetadata)
 		if ok {
-			log.Println("Adding file", m.Name)
 			filesMetadata = append(filesMetadata, m)
-		} else {
-			log.Println("Skipping folder")
 		}
 	}
+	db.dirLookup[path] = d
 	return filesMetadata, err
-
 }
 
-func (db *Dropbox) ListFolders(path string) ([]*files.FolderMetadata, error) {
+func (db *Dropbox) ListFolders(d *Directory) ([]*files.FolderMetadata, error) {
+	path := d.Metadata.PathDisplay
 	db.Lock()
 	defer db.Unlock()
 	out, err := db.fetchItems(path)
@@ -84,13 +145,10 @@ func (db *Dropbox) ListFolders(path string) ([]*files.FolderMetadata, error) {
 	for _, metadata := range out {
 		m, ok := (metadata).(*files.FolderMetadata)
 		if ok {
-			log.Println("Adding folder", m.Name)
 			folderMetadata = append(folderMetadata, m)
-		} else {
-
-			log.Println("Skipping file")
 		}
 	}
+	db.dirLookup[path] = d
 	return folderMetadata, err
 }
 
@@ -100,7 +158,17 @@ func (db *Dropbox) Upload(path string, data []byte) (*files.FileMetadata, error)
 	r := bytes.NewReader(data)
 	input := files.NewCommitInfo(path)
 	input.Mode = &files.WriteMode{Tagged: dropbox.Tagged{"overwrite"}}
-	return db.fileClient.Upload(input, r)
+	output, err := db.fileClient.Upload(input, r)
+	if err != nil {
+		return nil, err
+	}
+	file, cached := db.fileLookup[path]
+	if cached {
+		delete(db.fileLookup, path)
+		file.Metadata = output
+		db.fileLookup[file.Metadata.PathDisplay] = file
+	}
+	return output, nil
 }
 
 func (db *Dropbox) Move(oldPath string, newPath string) (*files.IsMetadata, error) {
@@ -111,6 +179,8 @@ func (db *Dropbox) Move(oldPath string, newPath string) (*files.IsMetadata, erro
 	if err != nil {
 		return nil, err
 	}
+	delete(db.fileLookup, oldPath)
+	delete(db.dirLookup, oldPath)
 	return &output, nil
 }
 
@@ -122,6 +192,8 @@ func (db *Dropbox) Delete(path string) (*files.IsMetadata, error) {
 	if err != nil {
 		return nil, err
 	}
+	delete(db.fileLookup, path)
+	delete(db.dirLookup, path)
 	return &output, nil
 
 }
@@ -130,7 +202,12 @@ func (db *Dropbox) Mkdir(path string) (*files.FolderMetadata, error) {
 	db.Lock()
 	defer db.Unlock()
 	input := files.NewCreateFolderArg(path)
-	return db.fileClient.CreateFolder(input)
+	metadata, err := db.fileClient.CreateFolder(input)
+	if err != nil {
+		return nil, err
+	}
+	db.dirLookup[metadata.PathDisplay] = &Directory{Metadata: metadata}
+	return metadata, nil
 }
 
 func (db *Dropbox) Download(path string) ([]byte, error) {

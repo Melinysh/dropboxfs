@@ -3,13 +3,14 @@ package main
 import (
 	"log"
 	"os"
-	"sync"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
-	dropbox "github.com/dropbox/dropbox-sdk-go-unofficial/dropbox"
+	"github.com/dropbox/dropbox-sdk-go-unofficial/dropbox"
 	"github.com/dropbox/dropbox-sdk-go-unofficial/dropbox/files"
 )
+
+var db Dropbox
 
 func main() {
 	if len(os.Args) != 2 {
@@ -42,17 +43,19 @@ func main() {
 
 	config := dropbox.Config{
 		Token: token,
-		//	LogLevel: LogInfo,
+		//LogLevel: LogInfo,
 	}
 	client := files.New(config)
-	db := Dropbox{client, &Directory{}, sync.Mutex{}}
-	rootDir := Directory{
-		Metadata: &files.FolderMetadata{Metadata: files.Metadata{Name: "Root", PathDisplay: ""}},
-		Cached:   false,
-		Client:   &db,
+	rootDir := &Directory{
+		Metadata: &files.FolderMetadata{},
 	}
-	db.RootDir = &rootDir
-
+	db = Dropbox{
+		fileClient: client,
+		RootDir:    rootDir,
+		cache:      map[string][]*files.Metadata{},
+		fileLookup: map[string]*File{},
+		dirLookup:  map[string]*Directory{},
+	}
 	srv := fs.New(c, nil)
 	log.Println("Ready to serve FUSE")
 	if err := srv.Serve(db); err != nil {
