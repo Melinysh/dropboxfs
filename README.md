@@ -31,7 +31,8 @@ export DROPBOX_ACCESS_TOKEN=<Access Token Here>
 - [ ] Cleanup code  
 - [x] Better caching mechanism 
 - [ ] Time based cache eviction?   
-- [ ] Detect off-machine Dropbox changes and sync them ([~Webhooks~](https://www.dropbox.com/developers/reference/webhooks), [Longpoll](https://www.dropbox.com/developers/documentation/http/documentation#files-list_folder-longpoll))  
+- [x] Detect off-machine Dropbox changes ([~Webhooks~](https://www.dropbox.com/developers/reference/webhooks), [Longpoll](https://www.dropbox.com/developers/documentation/http/documentation#files-list_folder-longpoll))  
+- [ ] Finer grain control to sync only whats changed, once change detected (might not be able to with longpoll API)
 - [ ] Add in better mechanism for getting/generating access tokens 
 - [x] Add tests   
 - [ ] Allow for changing of permissions  

@@ -43,7 +43,6 @@ func main() {
 
 	config := dropbox.Config{
 		Token: token,
-		//LogLevel: LogInfo,
 	}
 	client := files.New(config)
 	rootDir := &Directory{

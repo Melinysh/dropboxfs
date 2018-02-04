@@ -2,10 +2,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"hash/fnv"
 	"io/ioutil"
 	"log"
+	"net/http"
+	"strings"
 	"sync"
+	"time"
 
 	"bazil.org/fuse/fs"
 	"github.com/dropbox/dropbox-sdk-go-unofficial/dropbox"
@@ -72,6 +76,79 @@ func (db *Dropbox) NewOrCachedDirectory(metadata *files.FolderMetadata) *Directo
 }
 
 // lock assumed
+func (db *Dropbox) beginBackgroundPolling(cursor string, metadata []*files.Metadata) {
+	db.cache[cursor] = metadata
+	go func(c string) {
+		for {
+			// check if we still need to be polling it
+			db.Lock()
+			_, found := db.cache[c]
+			db.Unlock()
+			if !found {
+				return
+			}
+			log.Println("Starting polling call on cursor", c)
+			params := map[string]interface{}{"cursor": c, "timeout": 60}
+			jsonData, err := json.Marshal(params)
+			if err != nil {
+				log.Panicln("Unable to create JSON for longpoll", c, params, err)
+			}
+			resp, err := http.Post("https://notify.dropboxapi.com/2/files/list_folder/longpoll", "application/json", bytes.NewBuffer(jsonData))
+			if err != nil {
+				log.Panicln("Unable to longpoll on cursor", c, err)
+			}
+
+			var output map[string]interface{}
+			outputData, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				log.Panicln("Unable to extract json from longpoll response on cursor", c, err)
+			}
+			resp.Body.Close()
+			if err := json.Unmarshal(outputData, &output); err != nil {
+				log.Panicln("Unable to extract json map from longpoll response on cursor", c, err)
+			}
+
+			// if we detect changes, evict it from cache
+			if output["changes"].(bool) {
+				log.Println("Change detected for cursor", c, ".Evicting it from cache.")
+				db.Lock()
+				ms := db.cache[c]
+				delete(db.cache, c)
+				db.Unlock()
+				for _, m := range ms {
+					db.Lock()
+					delete(db.fileLookup, m.PathDisplay)
+					delete(db.dirLookup, m.PathDisplay)
+					log.Println("Removed item at path", m.PathDisplay, "from cache.")
+					db.Unlock()
+				}
+				// also evict parent directory from cache
+				if len(ms) > 0 {
+					lastSlash := strings.LastIndex(ms[0].PathDisplay, "/")
+					log.Println("Last index of /", lastSlash)
+					parentPathDisplay := "" // default to root dir
+					if lastSlash > 0 {
+						parentPathDisplay = ms[0].PathDisplay[:lastSlash]
+					}
+					db.Lock()
+					delete(db.dirLookup, parentPathDisplay)
+					db.Unlock()
+					log.Println("Evicted parent directory at path", parentPathDisplay)
+				}
+				return // don't detect anymore
+			} else { // just wait and poll again
+				extraSleep, ok := output["backoff"]
+				time.Sleep(time.Second * 5)
+				if ok {
+					log.Println("Dropbox requested backoff for cursor", c, ",", extraSleep, "seconds")
+					time.Sleep(time.Second * time.Duration(extraSleep.(int)))
+				}
+			}
+		}
+	}(cursor)
+}
+
+// lock assumed
 func (db *Dropbox) fetchItems(path string) ([]files.IsMetadata, error) {
 	nodes := []files.IsMetadata{}
 	log.Println("Looking up items for path", path)
@@ -91,7 +168,7 @@ func (db *Dropbox) fetchItems(path string) ([]files.IsMetadata, error) {
 			metadata = append(metadata, &folderMetadata.Metadata)
 		}
 	}
-	db.cache[output.Cursor] = metadata
+	db.beginBackgroundPolling(output.Cursor, metadata)
 
 	for output.HasMore {
 		log.Println("Going for another round of fetching for path", path)
@@ -110,7 +187,7 @@ func (db *Dropbox) fetchItems(path string) ([]files.IsMetadata, error) {
 				metadata = append(metadata, &folderMetadata.Metadata)
 			}
 		}
-		db.cache[output.Cursor] = metadata
+		db.beginBackgroundPolling(output.Cursor, metadata)
 	}
 
 	if _, found := db.dirLookup[db.RootDir.Metadata.PathDisplay]; !found {
