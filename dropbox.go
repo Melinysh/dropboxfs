@@ -157,6 +157,7 @@ func (db *Dropbox) Upload(path string, data []byte) (*files.FileMetadata, error)
 	defer db.Unlock()
 	r := bytes.NewReader(data)
 	input := files.NewCommitInfo(path)
+	input.Mute = true // don't send user notification on other clients
 	input.Mode = &files.WriteMode{Tagged: dropbox.Tagged{"overwrite"}}
 	output, err := db.fileClient.Upload(input, r)
 	if err != nil {
