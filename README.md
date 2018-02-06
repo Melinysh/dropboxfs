@@ -11,8 +11,7 @@ git clone https://github.com/Melinysh/dropboxfs.git
 cd dropboxfs
 go get .
 go build
-export DROPBOX_ACCESS_TOKEN=<Access Token Here>
-./dropboxfs <MountPoint>
+./dropboxfs -m <MountPoint> 
 ```
 
 ### TODO's
@@ -27,13 +26,14 @@ export DROPBOX_ACCESS_TOKEN=<Access Token Here>
 - [x] Copy files
 - [x] Rename files 
 - [ ] Add backgrounding option  
-- [ ] Stop spitting out so much debug info  
+- [ ] Stop spitting out so much debug info   
+- [x] Add verbose flag  
 - [ ] Cleanup code  
 - [x] Better caching mechanism 
 - [ ] Time based cache eviction?   
 - [x] Detect off-machine Dropbox changes ([~Webhooks~](https://www.dropbox.com/developers/reference/webhooks), [Longpoll](https://www.dropbox.com/developers/documentation/http/documentation#files-list_folder-longpoll))  
 - [ ] Finer grain control to sync only whats changed, once change detected (might not be able to with longpoll API)
-- [ ] Add in better mechanism for getting/generating access tokens 
+- [x] Add in better mechanism for getting/generating access tokens 
 - [x] Add tests   
 - [ ] Allow for changing of permissions  
 

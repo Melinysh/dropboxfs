@@ -28,11 +28,11 @@ func (d *Directory) populateDirectory() {
 	}
 	files, err := db.ListFiles(d)
 	if err != nil {
-		log.Panicln("Unable to load directories at path", d.Metadata.PathDisplay)
+		log.Panicln("Unable to load directories at path", d.Metadata.PathDisplay, err)
 	}
 	folders, err := db.ListFolders(d)
 	if err != nil {
-		log.Panicln("Unable to load files at path", d.Metadata.PathDisplay)
+		log.Panicln("Unable to load files at path", d.Metadata.PathDisplay, err)
 	}
 	d.Files = files
 	d.Subdirectories = folders
