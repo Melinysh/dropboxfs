@@ -249,30 +249,30 @@ func (db *Dropbox) Upload(path string, data []byte) (*files.FileMetadata, error)
 	return output, nil
 }
 
-func (db *Dropbox) Move(oldPath string, newPath string) (*files.IsMetadata, error) {
+func (db *Dropbox) Move(oldPath string, newPath string) (files.IsMetadata, error) {
 	input := files.NewRelocationArg(oldPath, newPath)
 	db.Lock()
 	defer db.Unlock()
-	output, err := db.fileClient.Move(input)
+	output, err := db.fileClient.MoveV2(input)
 	if err != nil {
 		return nil, err
 	}
 	delete(db.fileLookup, oldPath)
 	delete(db.dirLookup, oldPath)
-	return &output, nil
+	return output.Metadata, nil
 }
 
-func (db *Dropbox) Delete(path string) (*files.IsMetadata, error) {
+func (db *Dropbox) Delete(path string) (files.IsMetadata, error) {
 	db.Lock()
 	defer db.Unlock()
 	input := files.NewDeleteArg(path)
-	output, err := db.fileClient.Delete(input)
+	output, err := db.fileClient.DeleteV2(input)
 	if err != nil {
 		return nil, err
 	}
 	delete(db.fileLookup, path)
 	delete(db.dirLookup, path)
-	return &output, nil
+	return output.Metadata, nil
 
 }
 
@@ -280,12 +280,12 @@ func (db *Dropbox) Mkdir(path string) (*files.FolderMetadata, error) {
 	db.Lock()
 	defer db.Unlock()
 	input := files.NewCreateFolderArg(path)
-	metadata, err := db.fileClient.CreateFolder(input)
+	output, err := db.fileClient.CreateFolderV2(input)
 	if err != nil {
 		return nil, err
 	}
-	db.dirLookup[metadata.PathDisplay] = &Directory{Metadata: metadata}
-	return metadata, nil
+	db.dirLookup[output.Metadata.PathDisplay] = &Directory{Metadata: output.Metadata}
+	return output.Metadata, nil
 }
 
 func (db *Dropbox) Download(path string) ([]byte, error) {
