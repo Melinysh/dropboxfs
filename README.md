@@ -26,7 +26,7 @@ go build
 - [x] Copy files
 - [x] Rename files 
 - [ ] Add backgrounding option  
-- [ ] Stop spitting out so much debug info   
+- [ ] Stop spitting out so much debug info (make my own logger package)  
 - [x] Add verbose flag  
 - [ ] Cleanup code  
 - [x] Better caching mechanism 
