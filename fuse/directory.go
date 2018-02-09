@@ -1,4 +1,4 @@
-package main
+package fuse
 
 import (
 	"log"
@@ -6,7 +6,6 @@ import (
 	"sync"
 
 	"github.com/dropbox/dropbox-sdk-go-unofficial/dropbox/files"
-
 	"golang.org/x/net/context"
 
 	"bazil.org/fuse"
@@ -17,20 +16,21 @@ type Directory struct {
 	Metadata       *files.FolderMetadata
 	Subdirectories []*files.FolderMetadata
 	Files          []*files.FileMetadata
+	Client         *Dropbox
 	sync.Mutex
 }
 
 // lock assumed
 func (d *Directory) populateDirectory() {
-	if db.IsDirectoryCached(d) {
+	if d.Client.IsDirectoryCached(d) {
 		log.Println("Directory", d.Metadata.PathDisplay, "cached. Not fetching.")
 		return
 	}
-	files, err := db.ListFiles(d)
+	files, err := d.Client.ListFiles(d)
 	if err != nil {
 		log.Panicln("Unable to load directories at path", d.Metadata.PathDisplay, err)
 	}
-	folders, err := db.ListFolders(d)
+	folders, err := d.Client.ListFolders(d)
 	if err != nil {
 		log.Panicln("Unable to load files at path", d.Metadata.PathDisplay, err)
 	}
@@ -56,13 +56,13 @@ func (d *Directory) Lookup(ctx context.Context, name string) (fs.Node, error) {
 	for _, n := range d.Files {
 		if n.Metadata.Name == name {
 			log.Println("Found match for file lookup with size", n.Size)
-			return db.NewOrCachedFile(n), nil
+			return d.Client.NewOrCachedFile(n), nil
 		}
 	}
 	for _, n := range d.Subdirectories {
 		if n.Metadata.Name == name {
 			log.Println("Found match for directory lookup")
-			return db.NewOrCachedDirectory(n), nil
+			return d.Client.NewOrCachedDirectory(n), nil
 		}
 	}
 	return nil, fuse.ENOENT
@@ -88,11 +88,11 @@ func (d *Directory) Create(ctx context.Context, req *fuse.CreateRequest, resp *f
 	defer d.Unlock()
 	log.Println("Create request for name", req.Name)
 
-	fileMetadata, err := db.Upload(d.Metadata.PathDisplay+"/"+req.Name, []byte{})
+	fileMetadata, err := d.Client.Upload(d.Metadata.PathDisplay+"/"+req.Name, []byte{})
 	if err != nil {
 		log.Panicln("Unable to create file ", d.Metadata.PathDisplay+"/"+req.Name, err)
 	}
-	newFile := db.NewOrCachedFile(fileMetadata)
+	newFile := d.Client.NewOrCachedFile(fileMetadata)
 	d.Files = append(d.Files, newFile.Metadata)
 	return newFile, newFile, nil
 }
@@ -150,7 +150,7 @@ func (d *Directory) Rename(ctx context.Context, req *fuse.RenameRequest, newDir 
 		newParentDir.Files = append(newParentDir.Files, movingFile)
 	}
 
-	if _, err := db.Move(oldPath, newPath); err != nil {
+	if _, err := d.Client.Move(oldPath, newPath); err != nil {
 		log.Panicln("Unable to move form oldPath", oldPath, "to new path", newPath, err)
 	}
 
@@ -178,7 +178,7 @@ func (d *Directory) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 		}
 		d.Files = newFiles
 	}
-	_, err := db.Delete(d.Metadata.PathDisplay + "/" + req.Name)
+	_, err := d.Client.Delete(d.Metadata.PathDisplay + "/" + req.Name)
 	if err != nil {
 		log.Panicln("Unable to delete item at path", d.Metadata.PathDisplay+"/"+req.Name, err)
 	}
@@ -190,11 +190,11 @@ func (d *Directory) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node,
 	d.Lock()
 	defer d.Unlock()
 	log.Println("Mkdir request for name", req.Name)
-	folderMetadata, err := db.Mkdir(d.Metadata.PathDisplay + "/" + req.Name)
+	folderMetadata, err := d.Client.Mkdir(d.Metadata.PathDisplay + "/" + req.Name)
 	if err != nil {
 		log.Panicln("Unable to create new directory at path", d.Metadata.PathDisplay+"/"+req.Name, err)
 	}
-	newDir := db.NewOrCachedDirectory(folderMetadata)
+	newDir := d.Client.NewOrCachedDirectory(folderMetadata)
 	d.Subdirectories = append(d.Subdirectories, newDir.Metadata)
 	return newDir, nil
 }

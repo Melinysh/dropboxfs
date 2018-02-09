@@ -1,4 +1,4 @@
-package main
+package fuse
 
 import (
 	"log"
@@ -17,16 +17,17 @@ type File struct {
 	Metadata    *files.FileMetadata
 	Data        []byte
 	NeedsUpload bool
+	Client      *Dropbox
 	sync.Mutex
 }
 
 // Lock assumed
 func (f *File) populateFile() {
-	if db.IsFileCached(f) {
+	if f.Client.IsFileCached(f) {
 		log.Println("File", f.Metadata.PathDisplay, "cached. Not refreshing it.")
 		return
 	}
-	data, err := db.Download(f.Metadata.PathDisplay)
+	data, err := f.Client.Download(f.Metadata.PathDisplay)
 	if err != nil {
 		log.Panicln("Unable to download file", f.Metadata.PathDisplay, err)
 	}
@@ -98,7 +99,7 @@ func (f *File) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 	log.Println("Release requested on file", f.Metadata.PathDisplay)
 	if f.NeedsUpload {
 		log.Println("Uploading file to Dropbox", f.Metadata.PathDisplay)
-		_, err := db.Upload(f.Metadata.PathDisplay, f.Data)
+		_, err := f.Client.Upload(f.Metadata.PathDisplay, f.Data)
 		if err != nil {
 			log.Panicln("Unable to upload file", f.Metadata.PathDisplay, err)
 		}

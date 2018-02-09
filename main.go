@@ -8,13 +8,12 @@ import (
 	"log"
 	"os"
 
-	"bazil.org/fuse"
+	bazil "bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	"github.com/dropbox/dropbox-sdk-go-unofficial/dropbox"
 	"github.com/dropbox/dropbox-sdk-go-unofficial/dropbox/files"
+	"github.com/melinysh/dropboxfs/fuse"
 )
-
-var db Dropbox
 
 func main() {
 
@@ -55,7 +54,7 @@ func main() {
 	token := string(tokenData)
 
 	log.Println("Will try to mount to mountpoint", *mountpointPtr)
-	c, err := fuse.Mount(*mountpointPtr)
+	c, err := bazil.Mount(*mountpointPtr)
 	if err != nil {
 		log.Fatal("Unable to mount:", err)
 	}
@@ -80,16 +79,11 @@ func main() {
 		LogLevel: logLevel,
 	}
 	client := files.New(config)
-	rootDir := &Directory{
+	rootDir := &fuse.Directory{
 		Metadata: &files.FolderMetadata{},
 	}
-	db = Dropbox{
-		fileClient: client,
-		RootDir:    rootDir,
-		cache:      map[string][]*files.Metadata{},
-		fileLookup: map[string]*File{},
-		dirLookup:  map[string]*Directory{},
-	}
+	db := fuse.NewDropbox(client, rootDir)
+
 	srv := fs.New(c, nil)
 	log.Println("Ready to serve FUSE")
 	if err := srv.Serve(db); err != nil {

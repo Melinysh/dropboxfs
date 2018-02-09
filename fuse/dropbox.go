@@ -1,4 +1,4 @@
-package main
+package fuse
 
 import (
 	"bytes"
@@ -18,11 +18,23 @@ import (
 
 type Dropbox struct {
 	fileClient files.Client
-	RootDir    *Directory
+	rootDir    *Directory
 	cache      map[string][]*files.Metadata
 	fileLookup map[string]*File
 	dirLookup  map[string]*Directory
 	sync.Mutex
+}
+
+func NewDropbox(c files.Client, root *Directory) *Dropbox {
+	db := &Dropbox{
+		fileClient: c,
+		rootDir:    root,
+		cache:      map[string][]*files.Metadata{},
+		fileLookup: map[string]*File{},
+		dirLookup:  map[string]*Directory{},
+	}
+	root.Client = db
+	return db
 }
 
 func Inode(s string) uint64 {
@@ -34,7 +46,7 @@ func Inode(s string) uint64 {
 func (db Dropbox) Root() (fs.Node, error) {
 	db.Lock()
 	defer db.Unlock()
-	return db.RootDir, nil
+	return db.rootDir, nil
 }
 
 func (db *Dropbox) IsFileCached(f *File) bool {
@@ -53,6 +65,7 @@ func (db *Dropbox) NewOrCachedFile(metadata *files.FileMetadata) *File {
 	}
 	return &File{
 		Metadata: metadata,
+		Client:   db,
 	}
 }
 
@@ -72,6 +85,7 @@ func (db *Dropbox) NewOrCachedDirectory(metadata *files.FolderMetadata) *Directo
 	}
 	return &Directory{
 		Metadata: metadata,
+		Client:   db,
 	}
 }
 
@@ -114,18 +128,15 @@ func (db *Dropbox) beginBackgroundPolling(cursor string, metadata []*files.Metad
 				db.Lock()
 				ms := db.cache[c]
 				delete(db.cache, c)
-				db.Unlock()
 				for _, m := range ms {
-					db.Lock()
 					delete(db.fileLookup, m.PathDisplay)
 					delete(db.dirLookup, m.PathDisplay)
 					log.Println("Removed item at path", m.PathDisplay, "from cache.")
-					db.Unlock()
 				}
+				db.Unlock()
 				// also evict parent directory from cache
 				if len(ms) > 0 {
 					lastSlash := strings.LastIndex(ms[0].PathDisplay, "/")
-					log.Println("Last index of /", lastSlash)
 					parentPathDisplay := "" // default to root dir
 					if lastSlash > 0 {
 						parentPathDisplay = ms[0].PathDisplay[:lastSlash]
@@ -190,8 +201,8 @@ func (db *Dropbox) fetchItems(path string) ([]files.IsMetadata, error) {
 		db.beginBackgroundPolling(output.Cursor, metadata)
 	}
 
-	if _, found := db.dirLookup[db.RootDir.Metadata.PathDisplay]; !found {
-		db.dirLookup[db.RootDir.Metadata.PathDisplay] = db.RootDir
+	if _, found := db.dirLookup[db.rootDir.Metadata.PathDisplay]; !found {
+		db.dirLookup[db.rootDir.Metadata.PathDisplay] = db.rootDir
 	}
 
 	return nodes, nil
@@ -241,6 +252,8 @@ func (db *Dropbox) Upload(path string, data []byte) (*files.FileMetadata, error)
 		return nil, err
 	}
 	file, cached := db.fileLookup[path]
+
+	// if cached update to latest path
 	if cached {
 		delete(db.fileLookup, path)
 		file.Metadata = output
@@ -284,7 +297,7 @@ func (db *Dropbox) Mkdir(path string) (*files.FolderMetadata, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.dirLookup[output.Metadata.PathDisplay] = &Directory{Metadata: output.Metadata}
+	db.dirLookup[output.Metadata.PathDisplay] = &Directory{Metadata: output.Metadata, Client: db}
 	return output.Metadata, nil
 }
 
