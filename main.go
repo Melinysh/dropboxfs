@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	bazil "bazil.org/fuse"
 	"bazil.org/fuse/fs"
@@ -61,6 +63,7 @@ func main() {
 	if err != nil {
 		log.Fatalln("Unable to open token file", *tokenFilePtr, err)
 	}
+	// Files properly end in \n, trim this off to avoid auth issues.
 	token := string(bytes.TrimSpace(tokenData))
 
 	log.Infoln("Will try to mount to mountpoint", *mountpointPtr)
@@ -78,6 +81,18 @@ func main() {
 	if p := c.Protocol(); !p.HasInvalidate() {
 		log.Fatalln("kernel FUSE support is too old to have invalidations: version %v", p)
 	}
+	cleanup := func() {
+		bazil.Unmount(*mountpointPtr)
+	}
+
+	cSignals := make(chan os.Signal)
+	signal.Notify(cSignals, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-cSignals
+		cleanup()
+		os.Exit(1)
+	}()
+
 	// Cleanup the mount point in case of crashes
 	defer bazil.Unmount(*mountpointPtr)
 
