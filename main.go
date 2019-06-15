@@ -6,10 +6,15 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
+
+	_ "expvar"
+	_ "net/http/pprof"
 
 	bazil "bazil.org/fuse"
 	"bazil.org/fuse/fs"
@@ -25,9 +30,15 @@ func main() {
 	verbosePtr := flag.Bool("v", false, "Enable verbose output")
 	mountpointPtr := flag.String("m", "", "Path to FUSE mountpoint")
 	tokenFilePtr := flag.String("t", "", "Path to file that contains Dropbox access token")
+	stats := flag.Bool("e", false, "Expvar stats on 8080")
 
 	flag.Parse()
 
+	if *stats {
+		runtime.SetMutexProfileFraction(5)
+		log.Infoln("Starting expvar server at http://localhost:8080")
+		go http.ListenAndServe(":8080", nil)
+	}
 	logLevel := dropbox.LogOff
 	if *verbosePtr {
 		logLevel = dropbox.LogDebug
@@ -81,7 +92,7 @@ func main() {
 		log.Fatalln("Error from mount point:", err)
 	}
 	if p := c.Protocol(); !p.HasInvalidate() {
-		log.Fatalln("kernel FUSE support is too old to have invalidations: version %v", p)
+		log.Fatalf("kernel FUSE support is too old to have invalidations: version %v\n", p)
 	}
 	cleanup := func() {
 		bazil.Unmount(*mountpointPtr)
