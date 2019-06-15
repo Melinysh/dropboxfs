@@ -57,6 +57,7 @@ func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
 	defer f.Unlock()
 	log.Infoln("Requested Attr for File", f.Metadata.PathDisplay)
 	a.Inode = Inode(f.Metadata.Id)
+	// TODO: fetch Mode from Dropbox if available
 	a.Mode = 0700
 	a.Size = f.Metadata.Size
 	return nil
@@ -115,9 +116,18 @@ func (f *File) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 	log.Infoln("Release requested on file", f.Metadata.PathDisplay)
 	if f.NeedsUpload {
 		log.Infoln("Uploading file to Dropbox", f.Metadata.PathDisplay)
-		_, err := f.Client.Upload(f.Metadata.PathDisplay, f.Data)
+		retryNotice := func(err error, duration time.Duration) {
+			log.Errorf("Retrying %s in %s due to %s\n", f.Metadata.PathDisplay, err, duration)
+		}
+		err := backoff.RetryNotify(func() error {
+			_, err := f.Client.Upload(f.Metadata.PathDisplay, f.Data)
+			if err != nil {
+				return err
+			}
+			return nil
+		}, backoff.NewExponentialBackOff(), retryNotice)
+
 		if err != nil {
-			// TODO: retry
 			log.Panicln("Unable to upload file", f.Metadata.PathDisplay, err)
 		}
 		f.NeedsUpload = false
