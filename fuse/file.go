@@ -2,6 +2,7 @@ package fuse
 
 import (
 	"sync"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 
@@ -12,6 +13,7 @@ import (
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	"bazil.org/fuse/fuseutil"
+	"github.com/cenkalti/backoff"
 )
 
 type File struct {
@@ -28,14 +30,26 @@ func (f *File) populateFile() {
 		log.Infoln("File", f.Metadata.PathDisplay, "cached. Not refreshing it.")
 		return
 	}
-	data, err := f.Client.Download(f.Metadata.PathDisplay)
+	retryNotice := func(err error, duration time.Duration) {
+		log.Errorf("Retrying %s in %s due to %s\n", f.Metadata.PathDisplay, err, duration)
+	}
+	err := backoff.RetryNotify(func() error {
+		data, err := f.Client.Download(f.Metadata.PathDisplay)
+
+		if err != nil {
+			return err
+		}
+
+		f.Data = data
+		f.Metadata.Size = uint64(len(data))
+		f.NeedsUpload = false
+		return nil
+	}, backoff.NewExponentialBackOff(), retryNotice)
+
 	if err != nil {
 		// TODO: retry
-		log.Panicln("Unable to download file", f.Metadata.PathDisplay, err)
+		log.Panicln("Unable to download file and retries failed", f.Metadata.PathDisplay, err)
 	}
-	f.Data = data
-	f.Metadata.Size = uint64(len(data))
-	f.NeedsUpload = false
 }
 
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
