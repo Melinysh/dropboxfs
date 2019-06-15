@@ -67,6 +67,8 @@ func main() {
 	token := string(bytes.TrimSpace(tokenData))
 
 	log.Infoln("Will try to mount to mountpoint", *mountpointPtr)
+	// Always try to unmount in case there was dirty exit
+	bazil.Unmount(*mountpointPtr)
 	c, err := bazil.Mount(*mountpointPtr)
 	if err != nil {
 		log.Fatalln("Unable to mount:", err)
