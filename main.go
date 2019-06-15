@@ -93,8 +93,7 @@ func main() {
 		os.Exit(1)
 	}()
 
-	// Cleanup the mount point in case of crashes
-	defer bazil.Unmount(*mountpointPtr)
+	defer cleanup()
 
 	config := dropbox.Config{
 		Token:    token,
