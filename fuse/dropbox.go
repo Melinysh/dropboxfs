@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"hash/fnv"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 
 	"bazil.org/fuse/fs"
 	"github.com/dropbox/dropbox-sdk-go-unofficial/dropbox"
@@ -101,37 +102,51 @@ func (db *Dropbox) beginBackgroundPolling(cursor string, metadata []*files.Metad
 			if !found {
 				return
 			}
-			log.Println("Starting polling call on cursor", c)
+			delay := func() {
+				time.Sleep(250 * time.Millisecond)
+			}
+
+			log.Infoln("Starting polling call on cursor", c)
 			params := map[string]interface{}{"cursor": c, "timeout": 60}
 			jsonData, err := json.Marshal(params)
 			if err != nil {
-				log.Panicln("Unable to create JSON for longpoll", c, params, err)
+				log.Errorln("Unable to create JSON for longpoll", c, params, err)
+				delay()
+				continue
 			}
 			resp, err := http.Post("https://notify.dropboxapi.com/2/files/list_folder/longpoll", "application/json", bytes.NewBuffer(jsonData))
 			if err != nil {
-				log.Panicln("Unable to longpoll on cursor", c, err)
+				// TODO: retry
+				log.Errorln("Unable to longpoll on cursor", c, err)
+				delay()
+				continue
 			}
 
 			var output map[string]interface{}
 			outputData, err := ioutil.ReadAll(resp.Body)
 			if err != nil {
-				log.Panicln("Unable to extract json from longpoll response on cursor", c, err)
+				// TODO: retry
+				log.Errorln("Unable to extract json from longpoll response on cursor", c, err)
+				delay()
+				continue
 			}
 			resp.Body.Close()
 			if err := json.Unmarshal(outputData, &output); err != nil {
-				log.Panicln("Unable to extract json map from longpoll response on cursor", c, err)
+				log.Errorln("Unable to extract json map from longpoll response on cursor", c, err)
+				delay()
+				continue
 			}
 
 			// if we detect changes, evict it from cache
 			if output["changes"].(bool) {
-				log.Println("Change detected for cursor", c, ".Evicting it from cache.")
+				log.Infoln("Change detected for cursor", c, ".Evicting it from cache.")
 				db.Lock()
 				ms := db.cache[c]
 				delete(db.cache, c)
 				for _, m := range ms {
 					delete(db.fileLookup, m.PathDisplay)
 					delete(db.dirLookup, m.PathDisplay)
-					log.Println("Removed item at path", m.PathDisplay, "from cache.")
+					log.Infoln("Removed item at path", m.PathDisplay, "from cache.")
 				}
 				db.Unlock()
 				// also evict parent directory from cache
@@ -144,14 +159,14 @@ func (db *Dropbox) beginBackgroundPolling(cursor string, metadata []*files.Metad
 					db.Lock()
 					delete(db.dirLookup, parentPathDisplay)
 					db.Unlock()
-					log.Println("Evicted parent directory at path", parentPathDisplay)
+					log.Infoln("Evicted parent directory at path", parentPathDisplay)
 				}
 				return // don't detect anymore
 			} else { // just wait and poll again
 				extraSleep, ok := output["backoff"]
 				time.Sleep(time.Second * 5)
 				if ok {
-					log.Println("Dropbox requested backoff for cursor", c, ",", extraSleep, "seconds")
+					log.Warnln("Dropbox requested backoff for cursor", c, ",", extraSleep, "seconds")
 					time.Sleep(time.Second * time.Duration(extraSleep.(int)))
 				}
 			}
@@ -162,7 +177,7 @@ func (db *Dropbox) beginBackgroundPolling(cursor string, metadata []*files.Metad
 // lock assumed
 func (db *Dropbox) fetchItems(path string) ([]files.IsMetadata, error) {
 	nodes := []files.IsMetadata{}
-	log.Println("Looking up items for path", path)
+	log.Infoln("Looking up items for path", path)
 	input := files.NewListFolderArg(path)
 	output, err := db.fileClient.ListFolder(input)
 	if err != nil {
@@ -182,7 +197,7 @@ func (db *Dropbox) fetchItems(path string) ([]files.IsMetadata, error) {
 	db.beginBackgroundPolling(output.Cursor, metadata)
 
 	for output.HasMore {
-		log.Println("Going for another round of fetching for path", path)
+		log.Infoln("Going for another round of fetching for path", path)
 		metadata := []*files.Metadata{}
 		nextInput := files.NewListFolderContinueArg(output.Cursor)
 		output, err = db.fileClient.ListFolderContinue(nextInput)
