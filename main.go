@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"flag"
-	"fmt"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -47,7 +46,7 @@ func main() {
 
 	// demand mountpoint
 	if *mountpointPtr == "" {
-		fmt.Println("You must provide a mountpoint with -m")
+		log.Infoln("You must provide a mountpoint with -m")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
@@ -55,16 +54,16 @@ func main() {
 	// if no token file provided, ask for one and write it to disk
 	if *tokenFilePtr == "" {
 		reader := bufio.NewReader(os.Stdin)
-		fmt.Print("Enter Dropbox access token: ")
+		log.Print("Enter Dropbox access token: ")
 		t, err := reader.ReadString('\n')
 		if err != nil {
-			fmt.Println("Unable to read input", err)
+			log.Infoln("Unable to read input", err)
 			os.Exit(1)
 		}
 		token := strings.TrimSpace(t)
 		*tokenFilePtr = "./dropbox_token"
 		if err = ioutil.WriteFile(*tokenFilePtr, []byte(token), 0600); err != nil {
-			fmt.Println("Unable to write dropbox token into", *tokenFilePtr, err)
+			log.Infoln("Unable to write dropbox token into", *tokenFilePtr, err)
 			os.Exit(1)
 		}
 		log.Printf("Saved your token to %v\ndropboxfs can use this file later by providing the flag `-t %v`\n", *tokenFilePtr, *tokenFilePtr)

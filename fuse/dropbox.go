@@ -177,7 +177,7 @@ func (db *Dropbox) beginBackgroundPolling(cursor string, metadata []*files.Metad
 // lock assumed
 func (db *Dropbox) fetchItems(path string) ([]files.IsMetadata, error) {
 	nodes := []files.IsMetadata{}
-	log.Infoln("Looking up items for path", path)
+	log.Debugln("Looking up items for path", path)
 	input := files.NewListFolderArg(path)
 	output, err := db.fileClient.ListFolder(input)
 	if err != nil {

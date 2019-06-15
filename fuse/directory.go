@@ -1,9 +1,10 @@
 package fuse
 
 import (
-	"log"
 	"os"
 	"sync"
+
+	log "github.com/sirupsen/logrus"
 
 	"github.com/dropbox/dropbox-sdk-go-unofficial/dropbox/files"
 	"golang.org/x/net/context"
@@ -23,7 +24,7 @@ type Directory struct {
 // lock assumed
 func (d *Directory) populateDirectory() {
 	if d.Client.IsDirectoryCached(d) {
-		log.Println("Directory", d.Metadata.PathDisplay, "cached. Not fetching.")
+		log.Debugln("Directory", d.Metadata.PathDisplay, "cached. Not fetching.")
 		return
 	}
 	files, err := d.Client.ListFiles(d)
@@ -36,13 +37,13 @@ func (d *Directory) populateDirectory() {
 	}
 	d.Files = files
 	d.Subdirectories = folders
-	log.Println("populated directory at path", d.Metadata.PathDisplay)
+	log.Infoln("populated directory at path", d.Metadata.PathDisplay)
 }
 
 func (d *Directory) Attr(ctx context.Context, a *fuse.Attr) error {
 	d.Lock()
 	defer d.Unlock()
-	log.Println("Requested Attr for Directory", d.Metadata.PathDisplay)
+	log.Debugln("Requested Attr for Directory", d.Metadata.PathDisplay)
 	a.Inode = Inode(d.Metadata.Id)
 	a.Mode = os.ModeDir | 0700
 	return nil
@@ -51,17 +52,17 @@ func (d *Directory) Attr(ctx context.Context, a *fuse.Attr) error {
 func (d *Directory) Lookup(ctx context.Context, name string) (fs.Node, error) {
 	d.Lock()
 	defer d.Unlock()
-	log.Println("Requested lookup for ", name)
+	log.Debugln("Requested lookup for ", name)
 	d.populateDirectory()
 	for _, n := range d.Files {
 		if n.Metadata.Name == name {
-			log.Println("Found match for file lookup with size", n.Size)
+			log.Infoln("Found match for file lookup with size", n.Size)
 			return d.Client.NewOrCachedFile(n), nil
 		}
 	}
 	for _, n := range d.Subdirectories {
 		if n.Metadata.Name == name {
-			log.Println("Found match for directory lookup")
+			log.Debugln("Found match for directory lookup")
 			return d.Client.NewOrCachedDirectory(n), nil
 		}
 	}
@@ -71,7 +72,7 @@ func (d *Directory) Lookup(ctx context.Context, name string) (fs.Node, error) {
 func (d *Directory) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	d.Lock()
 	defer d.Unlock()
-	log.Println("Reading all dir", d.Metadata.PathDisplay)
+	log.Infoln("Reading all dir", d.Metadata.PathDisplay)
 	d.populateDirectory()
 	var children []fuse.Dirent
 	for _, f := range d.Files {
@@ -86,7 +87,7 @@ func (d *Directory) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 func (d *Directory) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (fs.Node, fs.Handle, error) {
 	d.Lock()
 	defer d.Unlock()
-	log.Println("Create request for name", req.Name)
+	log.Infoln("Create request for name", req.Name)
 
 	fileMetadata, err := d.Client.Upload(d.Metadata.PathDisplay+"/"+req.Name, []byte{})
 	if err != nil {
@@ -100,7 +101,7 @@ func (d *Directory) Create(ctx context.Context, req *fuse.CreateRequest, resp *f
 func (d *Directory) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fs.Node) error {
 	d.Lock()
 	defer d.Unlock()
-	log.Println("Rename request for", req.OldName, "to", req.NewName)
+	log.Infoln("Rename request for", req.OldName, "to", req.NewName)
 	newParentDir, _ := newDir.(*Directory)
 
 	// figure out if we're working on dir or file, because req doesn't give us this
@@ -160,7 +161,7 @@ func (d *Directory) Rename(ctx context.Context, req *fuse.RenameRequest, newDir 
 func (d *Directory) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 	d.Lock()
 	defer d.Unlock()
-	log.Println("Remove request for ", req.Name)
+	log.Infoln("Remove request for ", req.Name)
 	if req.Dir {
 		newDirs := []*files.FolderMetadata{}
 		for _, dir := range d.Subdirectories {
@@ -189,7 +190,7 @@ func (d *Directory) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 func (d *Directory) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
 	d.Lock()
 	defer d.Unlock()
-	log.Println("Mkdir request for name", req.Name)
+	log.Infoln("Mkdir request for name", req.Name)
 	folderMetadata, err := d.Client.Mkdir(d.Metadata.PathDisplay + "/" + req.Name)
 	if err != nil {
 		log.Panicln("Unable to create new directory at path", d.Metadata.PathDisplay+"/"+req.Name, err)
