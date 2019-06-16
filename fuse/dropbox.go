@@ -106,7 +106,7 @@ func (db *Dropbox) beginBackgroundPolling(cursor string, metadata []*files.Metad
 				time.Sleep(250 * time.Millisecond)
 			}
 
-			log.Infoln("Starting polling call on cursor", c)
+			log.Infof("Starting polling call on path: %s", m[0].PathDisplay)
 			params := map[string]interface{}{"cursor": c, "timeout": 60}
 			jsonData, err := json.Marshal(params)
 			if err != nil {
@@ -114,6 +114,7 @@ func (db *Dropbox) beginBackgroundPolling(cursor string, metadata []*files.Metad
 				delay()
 				continue
 			}
+			// Long poll becomes very inefficient for large file counts
 			resp, err := http.Post("https://notify.dropboxapi.com/2/files/list_folder/longpoll", "application/json", bytes.NewBuffer(jsonData))
 			if err != nil {
 				// TODO: retry
@@ -131,15 +132,23 @@ func (db *Dropbox) beginBackgroundPolling(cursor string, metadata []*files.Metad
 				continue
 			}
 			resp.Body.Close()
+
 			if err := json.Unmarshal(outputData, &output); err != nil {
 				log.Errorln("Unable to extract json map from longpoll response on cursor", c, err)
 				delay()
 				continue
 			}
 
+			// TODO:
+			// - consider using list_folder/continue to get the specific changes vs evicting all the child nodes.
+			// https://www.dropbox.com/developers/documentation/http/documentation#files-list_folder-continue
+			// - Dedupe the calls in order to not longpoll on every file/folder, but instead
+			// do strategic ones.
 			// if we detect changes, evict it from cache
+			// Set long polling at top level of Dropbox? And then iterate over changes via continue
+			// vs starting many many duplicated cursors?
 			if output["changes"].(bool) {
-				log.Infoln("Change detected for cursor", c, ".Evicting it from cache.")
+				log.Infoln("Change detected for path: %s", m[0].PathDisplay, ".Evicting it from cache.")
 				db.Lock()
 				ms := db.cache[c]
 				delete(db.cache, c)
