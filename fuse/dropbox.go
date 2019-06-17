@@ -8,6 +8,7 @@ import (
 	"hash/fnv"
 	"io/ioutil"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -63,8 +64,10 @@ func (db *Dropbox) NewOrCachedFile(metadata *files.FileMetadata) *File {
 	defer db.Unlock()
 	f, found := db.fileLookup[metadata.PathDisplay]
 	if found {
+		log.Debugln("Returning cached file", metadata.PathDisplay)
 		return f
 	}
+	log.Debugln("Returning uncached file", metadata.PathDisplay)
 	return &File{
 		Metadata: metadata,
 		Client:   db,
@@ -83,8 +86,10 @@ func (db *Dropbox) NewOrCachedDirectory(metadata *files.FolderMetadata) *Directo
 	defer db.Unlock()
 	dir, found := db.dirLookup[metadata.PathDisplay]
 	if found {
+		log.Debugln("Returning cached dir", metadata.PathDisplay)
 		return dir
 	}
+	log.Debugln("Returning uncached dir", metadata.PathDisplay)
 	return &Directory{
 		Metadata: metadata,
 		Client:   db,

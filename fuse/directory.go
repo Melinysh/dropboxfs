@@ -37,7 +37,7 @@ func (d *Directory) populateDirectory() {
 	}
 	d.Files = files
 	d.Subdirectories = folders
-	log.Infoln("populated directory at path", d.Metadata.PathDisplay)
+	log.Infof("Populated directory at path %+v\n", d.Metadata)
 }
 
 func (d *Directory) Attr(ctx context.Context, a *fuse.Attr) error {
