@@ -23,6 +23,7 @@ type Dropbox struct {
 	fileClient files.Client
 	rootDir    *Directory
 	cache      map[string][]*files.Metadata
+	pathCache  map[string]string
 	fileLookup map[string]*File
 	dirLookup  map[string]*Directory
 	sync.Mutex
@@ -35,6 +36,7 @@ func NewDropbox(c files.Client, root *Directory) *Dropbox {
 		cache:      map[string][]*files.Metadata{},
 		fileLookup: map[string]*File{},
 		dirLookup:  map[string]*Directory{},
+		pathCache:  make(map[string]string),
 	}
 	root.Client = db
 	return db
@@ -209,6 +211,9 @@ func (db *Dropbox) fetchItems(path string) ([]files.IsMetadata, error) {
 	nodes := []files.IsMetadata{}
 	log.Debugln("Looking up items for path", path)
 	input := files.NewListFolderArg(path)
+	// Debug how to get recursive working vs blocking
+	//input.Recursive = true
+	input.Limit = 2000
 	output, err := db.fileClient.ListFolder(input)
 	if err != nil {
 		return nodes, err
@@ -251,6 +256,34 @@ func (db *Dropbox) fetchItems(path string) ([]files.IsMetadata, error) {
 	}
 
 	return nodes, nil
+}
+
+func (db *Dropbox) listFolderContinueAll(cursor string) ([]*files.Metadata, error) {
+	nodes := []files.IsMetadata{}
+	metadata := []*files.Metadata{}
+	nextInput := files.NewListFolderContinueArg(cursor)
+	output, err := db.fileClient.ListFolderContinue(nextInput)
+	nodes = append(nodes, output.Entries...)
+	for output.HasMore {
+		nextInput := files.NewListFolderContinueArg(output.Cursor)
+		output, err = db.fileClient.ListFolderContinue(nextInput)
+		if err != nil {
+			return metadata, err
+		}
+		nodes = append(nodes, output.Entries...)
+	}
+
+	for _, entry := range nodes {
+		switch v := entry.(type) {
+		case *files.FileMetadata:
+			metadata = append(metadata, &v.Metadata)
+		case *files.FolderMetadata:
+			metadata = append(metadata, &v.Metadata)
+		case *files.DeletedMetadata:
+			metadata = append(metadata, &v.Metadata)
+		}
+	}
+	return metadata, nil
 }
 
 func (db *Dropbox) ListFiles(d *Directory) ([]*files.FileMetadata, error) {
