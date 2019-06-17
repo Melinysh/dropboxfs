@@ -2,11 +2,12 @@ package fuse
 
 import (
 	"bytes"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"hash/fnv"
 	"io/ioutil"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -90,14 +91,55 @@ func (db *Dropbox) NewOrCachedDirectory(metadata *files.FolderMetadata) *Directo
 	}
 }
 
-// lock assumed
+func cursorSHA(s string) string {
+	h := sha1.New()
+	h.Write([]byte(s))
+	sha1_hash := hex.EncodeToString(h.Sum(nil))
+	return sha1_hash
+}
+
+func longpoll(c string) (map[string]interface{}, bool) {
+	params := map[string]interface{}{"cursor": c, "timeout": 60}
+	jsonData, err := json.Marshal(params)
+	if err != nil {
+		log.Errorln("Unable to create JSON for longpoll", c, params, err)
+		return nil, true
+	}
+	// Long poll becomes very inefficient for large file counts
+	resp, err := http.Post("https://notify.dropboxapi.com/2/files/list_folder/longpoll", "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		// TODO: retry
+		log.Errorln("Unable to longpoll on cursor", c, err)
+		return nil, true
+	}
+
+	var output map[string]interface{}
+	outputData, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		// TODO: retry
+		log.Errorln("Unable to extract json from longpoll response on cursor", c, err)
+		return nil, true
+	}
+	resp.Body.Close()
+
+	if err := json.Unmarshal(outputData, &output); err != nil {
+		log.Errorln("Unable to extract json map from longpoll response on cursor", c, err)
+		return nil, true
+	}
+	return output, false
+}
+
+// Long polling reimplemented due to Dropbox Go SDK having broken implementation
+// Source: https://github.com/dropbox/dropbox-sdk-go-unofficial/issues/7
+// Lock assumed
 func (db *Dropbox) beginBackgroundPolling(cursor string, metadata []*files.Metadata) {
 	db.cache[cursor] = metadata
+	log.Infof("Starting polling call on path: %s for cursor: %s", metadata[0].PathDisplay, cursorSHA(cursor))
 	go func(c string) {
 		for {
 			// check if we still need to be polling it
 			db.Lock()
-			_, found := db.cache[c]
+			m, found := db.cache[c]
 			db.Unlock()
 			if !found {
 				return
@@ -106,35 +148,9 @@ func (db *Dropbox) beginBackgroundPolling(cursor string, metadata []*files.Metad
 				time.Sleep(250 * time.Millisecond)
 			}
 
-			log.Infof("Starting polling call on path: %s", m[0].PathDisplay)
-			params := map[string]interface{}{"cursor": c, "timeout": 60}
-			jsonData, err := json.Marshal(params)
-			if err != nil {
-				log.Errorln("Unable to create JSON for longpoll", c, params, err)
-				delay()
-				continue
-			}
-			// Long poll becomes very inefficient for large file counts
-			resp, err := http.Post("https://notify.dropboxapi.com/2/files/list_folder/longpoll", "application/json", bytes.NewBuffer(jsonData))
-			if err != nil {
-				// TODO: retry
-				log.Errorln("Unable to longpoll on cursor", c, err)
-				delay()
-				continue
-			}
-
-			var output map[string]interface{}
-			outputData, err := ioutil.ReadAll(resp.Body)
-			if err != nil {
-				// TODO: retry
-				log.Errorln("Unable to extract json from longpoll response on cursor", c, err)
-				delay()
-				continue
-			}
-			resp.Body.Close()
-
-			if err := json.Unmarshal(outputData, &output); err != nil {
-				log.Errorln("Unable to extract json map from longpoll response on cursor", c, err)
+			log.Infof("Polling call on path: %s", m[0].PathDisplay)
+			output, retry := longpoll(c)
+			if retry {
 				delay()
 				continue
 			}
