@@ -8,6 +8,7 @@ import (
 	"hash/fnv"
 	"io/ioutil"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -228,10 +229,6 @@ func longpoll(c string) (map[string]interface{}, bool) {
 // Source: https://github.com/dropbox/dropbox-sdk-go-unofficial/issues/7
 // Lock assumed
 func (db *Dropbox) beginBackgroundPolling(cursor, path string, metadata []*files.Metadata) {
-	if path != "" {
-		log.Infoln("Skipping non-root polling")
-		return
-	}
 	if _, found := db.pathCache[path]; found {
 		log.Infoln("Polling already running for path ", path)
 		return
@@ -291,38 +288,41 @@ func (db *Dropbox) applyChanges(nodes []files.IsMetadata) error {
 				Metadata: v,
 				Client:   db,
 			}
+			db.evictParentFolder(v.PathDisplay)
 			log.Debugln("Added file at path", v.PathDisplay)
 		case *files.FolderMetadata:
 			db.dirLookup[v.PathDisplay] = &Directory{
 				Metadata: v,
 				Client:   db,
 			}
+			db.evictParentFolder(v.PathDisplay)
 			log.Debugln("Added folder at path", v.PathDisplay)
 		case *files.DeletedMetadata:
 			delete(db.fileLookup, v.PathDisplay)
 			delete(db.dirLookup, v.PathDisplay)
+			db.evictParentFolder(v.PathDisplay)
 			log.Debugln("Removed item at path", v.PathDisplay)
 		default:
 			log.Errorf("Unhandled change: %+v", v)
 		}
 	}
 	db.Unlock()
-
-	// // also evict parent directory from cache
-	// if len(ms) > 0 {
-	// 	lastSlash := strings.LastIndex(ms[0].PathDisplay, "/")
-	// 	parentPathDisplay := "" // default to root dir
-	// 	if lastSlash > 0 {
-	// 		parentPathDisplay = ms[0].PathDisplay[:lastSlash]
-	// 	}
-	// 	db.Lock()
-	// 	delete(db.dirLookup, parentPathDisplay)
-	// 	db.Unlock()
-	// 	log.Infoln("Evicted parent directory at path", parentPathDisplay)
-	// }
-	// log.Infof("Evicting cursor for path '%s' (%s)\n", path, cursorSHA(c))
-
 	return nil
+}
+
+// TODO: setup background refresh for these folders
+// expected to be called under lock
+func (db *Dropbox) evictParentFolder(pathDisplay string) {
+	// TODO: determine correct way to handle this situation
+	// Otherwise the parent is missing/has the added/deleted file
+	lastSlash := strings.LastIndex(pathDisplay, "/")
+	parentPathDisplay := "" // default to root dir
+	if lastSlash > 0 {
+		parentPathDisplay = pathDisplay[:lastSlash]
+	}
+	delete(db.dirLookup, parentPathDisplay)
+	log.Infoln("Evicted parent directory at path", parentPathDisplay)
+	go db.fetchItems(parentPathDisplay)
 }
 
 func (db *Dropbox) getRecursiveCursor(path string) (string, error) {
