@@ -8,7 +8,7 @@ import (
 	"hash/fnv"
 	"io/ioutil"
 	"net/http"
-	"strings"
+	"path"
 	"sync"
 	"time"
 
@@ -288,6 +288,7 @@ func (db *Dropbox) applyChanges(nodes []files.IsMetadata) error {
 				Metadata: v,
 				Client:   db,
 			}
+			// TODO: Merge into parent d.Files slice
 			db.evictParentFolder(v.PathDisplay)
 			log.Debugln("Added file at path", v.PathDisplay)
 		case *files.FolderMetadata:
@@ -295,6 +296,7 @@ func (db *Dropbox) applyChanges(nodes []files.IsMetadata) error {
 				Metadata: v,
 				Client:   db,
 			}
+			// TODO: Merge into parent d.Files slice
 			db.evictParentFolder(v.PathDisplay)
 			log.Debugln("Added folder at path", v.PathDisplay)
 		case *files.DeletedMetadata:
@@ -310,19 +312,22 @@ func (db *Dropbox) applyChanges(nodes []files.IsMetadata) error {
 	return nil
 }
 
+func (db *Dropbox) parentFolder(pathDisplay string) string {
+	parent := path.Dir(pathDisplay)
+	if parent == "." {
+		parent = ""
+	}
+	return parent
+}
+
 // TODO: setup background refresh for these folders
 // expected to be called under lock
 func (db *Dropbox) evictParentFolder(pathDisplay string) {
 	// TODO: determine correct way to handle this situation
 	// Otherwise the parent is missing/has the added/deleted file
-	lastSlash := strings.LastIndex(pathDisplay, "/")
-	parentPathDisplay := "" // default to root dir
-	if lastSlash > 0 {
-		parentPathDisplay = pathDisplay[:lastSlash]
-	}
+	parentPathDisplay := db.parentFolder(pathDisplay)
 	delete(db.dirLookup, parentPathDisplay)
 	log.Infoln("Evicted parent directory at path", parentPathDisplay)
-	go db.fetchItems(parentPathDisplay)
 }
 
 func (db *Dropbox) getRecursiveCursor(path string) (string, error) {
@@ -418,6 +423,7 @@ func (db *Dropbox) listFolderAll(cursor string) ([]files.IsMetadata, string, err
 func (db *Dropbox) listFolderContinueAll(cursor string) ([]*files.Metadata, string, error) {
 	nodes, c, err := db.listFolderAll(cursor)
 	if err != nil {
+		log.Errorf("Error with listFolderAll %s", err)
 		return nil, cursor, err
 	}
 
