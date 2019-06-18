@@ -224,14 +224,19 @@ func longpoll(c string) (map[string]interface{}, bool) {
 // Long polling reimplemented due to Dropbox Go SDK having broken implementation
 // Source: https://github.com/dropbox/dropbox-sdk-go-unofficial/issues/7
 // Lock assumed
-func (db *Dropbox) beginBackgroundPolling(cursor string, metadata []*files.Metadata) {
+func (db *Dropbox) beginBackgroundPolling(cursor, path string, metadata []*files.Metadata) {
+	if _, found := db.pathCache[path]; found {
+		log.Infoln("Skipping duplicate cursor")
+		return
+	}
+	db.pathCache[path] = cursor
 	db.cache[cursor] = metadata
-	log.Infof("Starting polling call on path: %s for cursor: %s", metadata[0].PathDisplay, cursorSHA(cursor))
+	log.Infof("Starting polling call on path: '%s' for cursor: %s", path, cursorSHA(cursor))
 	go func(c string) {
 		for {
 			// check if we still need to be polling it
 			db.Lock()
-			m, found := db.cache[c]
+			_, found := db.cache[c]
 			db.Unlock()
 			if !found {
 				return
@@ -240,7 +245,9 @@ func (db *Dropbox) beginBackgroundPolling(cursor string, metadata []*files.Metad
 				time.Sleep(250 * time.Millisecond)
 			}
 
-			log.Infof("Polling call on path: %s", m[0].PathDisplay)
+			log.Infof("Polling call on path: '%s'", path)
+			// Setup consumer of the polling
+			// Setup the async polling
 			output, retry := longpoll(c)
 			if retry {
 				delay()
@@ -256,10 +263,11 @@ func (db *Dropbox) beginBackgroundPolling(cursor string, metadata []*files.Metad
 			// Set long polling at top level of Dropbox? And then iterate over changes via continue
 			// vs starting many many duplicated cursors?
 			if output["changes"].(bool) {
-				log.Infoln("Change detected for path: %s", m[0].PathDisplay, ".Evicting it from cache.")
+				log.Infoln("Change detected for path: '%s'", path)
 				db.Lock()
 				ms := db.cache[c]
 				delete(db.cache, c)
+				delete(db.pathCache, path)
 				for _, m := range ms {
 					delete(db.fileLookup, m.PathDisplay)
 					delete(db.dirLookup, m.PathDisplay)
@@ -278,6 +286,7 @@ func (db *Dropbox) beginBackgroundPolling(cursor string, metadata []*files.Metad
 					db.Unlock()
 					log.Infoln("Evicted parent directory at path", parentPathDisplay)
 				}
+				log.Infof("Evicting cursor for path '%s' (%s)\n", path, cursorSHA(c))
 				return // don't detect anymore
 			} else { // just wait and poll again
 				extraSleep, ok := output["backoff"]
@@ -314,7 +323,6 @@ func (db *Dropbox) fetchItems(path string) ([]files.IsMetadata, error) {
 			metadata = append(metadata, &folderMetadata.Metadata)
 		}
 	}
-	db.beginBackgroundPolling(output.Cursor, metadata)
 
 	for output.HasMore {
 		log.Infoln("Going for another round of fetching for path", path)
@@ -333,9 +341,9 @@ func (db *Dropbox) fetchItems(path string) ([]files.IsMetadata, error) {
 				metadata = append(metadata, &folderMetadata.Metadata)
 			}
 		}
-		db.beginBackgroundPolling(output.Cursor, metadata)
 	}
 
+	db.beginBackgroundPolling(output.Cursor, path, metadata)
 	if _, found := db.dirLookup[db.rootDir.Metadata.PathDisplay]; !found {
 		db.dirLookup[db.rootDir.Metadata.PathDisplay] = db.rootDir
 	}
