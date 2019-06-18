@@ -253,7 +253,7 @@ func (db *Dropbox) beginBackgroundPolling(cursor, path string, metadata []*files
 
 			if output["changes"].(bool) {
 				log.Infof("Change detected for path: '%s'\n", path)
-				nodes, cursor, err := db.listFolderAll(cursor)
+				nodes, cursor, err := db.listFolderAll(c)
 				log.Debugf("Nodes %+v", nodes)
 				if err != nil {
 					log.Errorln("Error fetching Dropbox changes %s", err)
