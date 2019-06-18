@@ -40,9 +40,13 @@ func main() {
 	}
 	logLevel := dropbox.LogOff
 	if *verbosePtr {
-		logLevel = dropbox.LogDebug
+		//logLevel = dropbox.LogDebug
 		log.SetLevel(log.DebugLevel)
 	}
+
+	log.SetFormatter(&log.TextFormatter{
+		FullTimestamp: true,
+	})
 
 	// demand mountpoint
 	if *mountpointPtr == "" {
