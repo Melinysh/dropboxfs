@@ -19,6 +19,91 @@ import (
 	"github.com/dropbox/dropbox-sdk-go-unofficial/dropbox/files"
 )
 
+// Credit: https://gist.github.com/unakatsuo/0dcab7898d092d87a77d684f3e71621b
+type noauthTransport struct {
+	http.Transport
+}
+
+func (t *noauthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req.Header.Del("Authorization")
+	return t.Transport.RoundTrip(req)
+}
+
+func newNoAuthClient() *http.Client {
+	return &http.Client{
+		Transport: &noauthTransport{},
+	}
+}
+
+func (db *Dropbox) ListAndFolderPoll(folderPath string) error {
+	config := dropbox.Config{
+		Token: "your secret",
+	}
+	dbx := files.New(config)
+	reqListFolder := files.NewListFolderArg(folderPath)
+	res, err := dbx.ListFolder(reqListFolder)
+	if err != nil {
+		return err
+	}
+	cursor := res.Cursor
+	log.Printf("Start to poll '%s'", folderPath)
+	for {
+		noauthdbx := files.New(dropbox.Config{Client: newNoAuthClient()})
+		req := files.NewListFolderLongpollArg(cursor)
+		res, err := noauthdbx.ListFolderLongpoll(req)
+		if err != nil {
+			return err
+		}
+		if !res.Changes {
+			continue
+		}
+		log.Print("There is a change")
+		res2, err := dbx.ListFolderGetLatestCursor(reqListFolder)
+		if err != nil {
+			return err
+		}
+		cursor = res2.Cursor
+	}
+	return nil
+}
+
+// End credit
+
+func (db *Dropbox) FolderPoll(cursor string, c chan []files.IsMetadata) error {
+	for {
+		noauthdbx := files.New(dropbox.Config{Client: newNoAuthClient()})
+		req := files.NewListFolderLongpollArg(cursor)
+		res, err := noauthdbx.ListFolderLongpoll(req)
+		if err != nil {
+			return err
+		}
+		if res.Backoff > 0 {
+			time.Sleep(time.Duration(res.Backoff) * time.Second)
+		}
+		// Continue using the same cursor to check for changes
+		if !res.Changes {
+			continue
+		}
+		log.Infoln("There is a change")
+		req2 := files.NewListFolderContinueArg(cursor)
+		res2, err := db.fileClient.ListFolderContinue(req2)
+		if err != nil {
+			return err
+		}
+		c <- res2.Entries
+		for res2.HasMore {
+			req2 = files.NewListFolderContinueArg(res2.Cursor)
+			res2, err = db.fileClient.ListFolderContinue(req2)
+			if err != nil {
+				return err
+			}
+			c <- res2.Entries
+		}
+		cursor = res2.Cursor
+	}
+	return nil
+}
+
 type Dropbox struct {
 	fileClient files.Client
 	rootDir    *Directory
