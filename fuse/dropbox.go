@@ -227,8 +227,7 @@ func longpoll(c string) (map[string]interface{}, bool) {
 
 // Long polling reimplemented due to Dropbox Go SDK having broken implementation
 // Source: https://github.com/dropbox/dropbox-sdk-go-unofficial/issues/7
-// Lock assumed
-func (db *Dropbox) beginBackgroundPolling(cursor, path string, metadata []*files.Metadata) {
+func (db *Dropbox) beginBackgroundPolling(cursor, path string) {
 	if _, found := db.pathCache[path]; found {
 		log.Infoln("Polling already running for path ", path)
 		return
@@ -332,18 +331,13 @@ func (db *Dropbox) evictParentFolder(pathDisplay string) {
 
 func (db *Dropbox) getRecursiveCursor(path string) (string, error) {
 	input := files.NewListFolderArg(path)
-	// Debug how to get recursive working vs blocking
-	//input.Recursive = true
 	input.Limit = 2000
 	input.Recursive = true
-	log.Debugln("Getting latest cursor", path)
 	output, err := db.fileClient.ListFolderGetLatestCursor(input)
-	log.Debugf("Got latest cursor %+v\n", output)
 	if err != nil {
 		return "", err
 	}
-	metadata := []*files.Metadata{}
-	db.beginBackgroundPolling(output.Cursor, path, metadata)
+	db.beginBackgroundPolling(output.Cursor, path)
 	return output.Cursor, nil
 }
 
@@ -352,8 +346,6 @@ func (db *Dropbox) fetchItems(path string) ([]files.IsMetadata, error) {
 	nodes := []files.IsMetadata{}
 	log.Debugln("Looking up items for path", path)
 	input := files.NewListFolderArg(path)
-	// Debug how to get recursive working vs blocking
-	//input.Recursive = true
 	input.Limit = 2000
 	output, err := db.fileClient.ListFolder(input)
 	if err != nil {
