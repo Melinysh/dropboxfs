@@ -441,38 +441,34 @@ func (db *Dropbox) listFolderContinueAll(cursor string) ([]*files.Metadata, stri
 	return metadata, c, nil
 }
 
-// TODO: remove duplication here, if we're fetching data for files and folders
-// by default, then store all of it instead of just File OR Folder
-func (db *Dropbox) ListFiles(d *Directory) ([]*files.FileMetadata, error) {
+func (db *Dropbox) listFilesAndFolders(d *Directory) ([]*files.FileMetadata, []*files.FolderMetadata, error) {
+	// Can only reliably be called inside ListFiles or ListFolders
 	path := d.Metadata.PathDisplay
 	db.Lock()
 	defer db.Unlock()
 	out, err := db.fetchItems(path)
 	filesMetadata := []*files.FileMetadata{}
+	folderMetadata := []*files.FolderMetadata{}
 	for _, metadata := range out {
-		m, ok := (metadata).(*files.FileMetadata)
-		if ok {
-			filesMetadata = append(filesMetadata, m)
+		switch v := metadata.(type) {
+		case *files.FileMetadata:
+			filesMetadata = append(filesMetadata, v)
+		case *files.FolderMetadata:
+			folderMetadata = append(folderMetadata, v)
 		}
 	}
 	db.dirLookup[path] = d
-	return filesMetadata, err
+	return filesMetadata, folderMetadata, err
+}
+
+func (db *Dropbox) ListFiles(d *Directory) ([]*files.FileMetadata, error) {
+	fx, _, err := db.listFilesAndFolders(d)
+	return fx, err
 }
 
 func (db *Dropbox) ListFolders(d *Directory) ([]*files.FolderMetadata, error) {
-	path := d.Metadata.PathDisplay
-	db.Lock()
-	defer db.Unlock()
-	out, err := db.fetchItems(path)
-	folderMetadata := []*files.FolderMetadata{}
-	for _, metadata := range out {
-		m, ok := (metadata).(*files.FolderMetadata)
-		if ok {
-			folderMetadata = append(folderMetadata, m)
-		}
-	}
-	db.dirLookup[path] = d
-	return folderMetadata, err
+	_, folders, err := db.listFilesAndFolders(d)
+	return folders, err
 }
 
 func (db *Dropbox) Upload(path string, data []byte) (*files.FileMetadata, error) {
