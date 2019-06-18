@@ -8,7 +8,6 @@ import (
 	"hash/fnv"
 	"io/ioutil"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -124,6 +123,10 @@ func NewDropbox(c files.Client, root *Directory) *Dropbox {
 		pathCache:  make(map[string]string),
 	}
 	root.Client = db
+	// Start polling for changes
+	// According to https://www.dropboxforum.com/t5/API-Support-Feedback/API-v2-Long-polling/td-p/247873
+	// And official docs this is account wide despite what folder is passed in.
+	go db.getRecursiveCursor("")
 	return db
 }
 
@@ -225,26 +228,23 @@ func longpoll(c string) (map[string]interface{}, bool) {
 // Source: https://github.com/dropbox/dropbox-sdk-go-unofficial/issues/7
 // Lock assumed
 func (db *Dropbox) beginBackgroundPolling(cursor, path string, metadata []*files.Metadata) {
-	if _, found := db.pathCache[path]; found {
-		log.Infoln("Skipping duplicate cursor")
+	if path != "" {
+		log.Infoln("Skipping non-root polling")
 		return
 	}
+	if _, found := db.pathCache[path]; found {
+		log.Infoln("Polling already running for path ", path)
+		return
+	}
+	delay := func() {
+		time.Sleep(250 * time.Millisecond)
+	}
+
 	db.pathCache[path] = cursor
-	db.cache[cursor] = metadata
 	log.Infof("Starting polling call on path: '%s' for cursor: %s", path, cursorSHA(cursor))
 	go func(c string) {
 		for {
 			// check if we still need to be polling it
-			db.Lock()
-			_, found := db.cache[c]
-			db.Unlock()
-			if !found {
-				return
-			}
-			delay := func() {
-				time.Sleep(250 * time.Millisecond)
-			}
-
 			log.Infof("Polling call on path: '%s'", path)
 			// Setup consumer of the polling
 			// Setup the async polling
@@ -254,40 +254,21 @@ func (db *Dropbox) beginBackgroundPolling(cursor, path string, metadata []*files
 				continue
 			}
 
-			// TODO:
-			// - consider using list_folder/continue to get the specific changes vs evicting all the child nodes.
-			// https://www.dropbox.com/developers/documentation/http/documentation#files-list_folder-continue
-			// - Dedupe the calls in order to not longpoll on every file/folder, but instead
-			// do strategic ones.
-			// if we detect changes, evict it from cache
-			// Set long polling at top level of Dropbox? And then iterate over changes via continue
-			// vs starting many many duplicated cursors?
 			if output["changes"].(bool) {
-				log.Infoln("Change detected for path: '%s'", path)
-				db.Lock()
-				ms := db.cache[c]
-				delete(db.cache, c)
-				delete(db.pathCache, path)
-				for _, m := range ms {
-					delete(db.fileLookup, m.PathDisplay)
-					delete(db.dirLookup, m.PathDisplay)
-					log.Infoln("Removed item at path", m.PathDisplay, "from cache.")
+				log.Infof("Change detected for path: '%s'\n", path)
+				nodes, cursor, err := db.listFolderAll(cursor)
+				log.Debugf("Nodes %+v", nodes)
+				if err != nil {
+					log.Errorln("Error fetching Dropbox changes %s", err)
+					continue
 				}
-				db.Unlock()
-				// also evict parent directory from cache
-				if len(ms) > 0 {
-					lastSlash := strings.LastIndex(ms[0].PathDisplay, "/")
-					parentPathDisplay := "" // default to root dir
-					if lastSlash > 0 {
-						parentPathDisplay = ms[0].PathDisplay[:lastSlash]
-					}
-					db.Lock()
-					delete(db.dirLookup, parentPathDisplay)
-					db.Unlock()
-					log.Infoln("Evicted parent directory at path", parentPathDisplay)
+				err = db.applyChanges(nodes)
+				if err != nil {
+					log.Errorln("Unable to apply changes", err)
 				}
-				log.Infof("Evicting cursor for path '%s' (%s)\n", path, cursorSHA(c))
-				return // don't detect anymore
+				// Follow up with the next cursor
+				log.Debugf("Switching out old cursor(%s) for new one (%s)", cursorSHA(c), cursorSHA(cursor))
+				c = cursor
 			} else { // just wait and poll again
 				extraSleep, ok := output["backoff"]
 				time.Sleep(time.Second * 5)
@@ -298,6 +279,67 @@ func (db *Dropbox) beginBackgroundPolling(cursor, path string, metadata []*files
 			}
 		}
 	}(cursor)
+}
+
+func (db *Dropbox) applyChanges(nodes []files.IsMetadata) error {
+	db.Lock()
+
+	for _, entry := range nodes {
+		switch v := entry.(type) {
+		case *files.FileMetadata:
+			db.fileLookup[v.PathDisplay] = &File{
+				Metadata: v,
+				Client:   db,
+			}
+			log.Debugln("Added file at path", v.PathDisplay)
+		case *files.FolderMetadata:
+			db.dirLookup[v.PathDisplay] = &Directory{
+				Metadata: v,
+				Client:   db,
+			}
+			log.Debugln("Added folder at path", v.PathDisplay)
+		case *files.DeletedMetadata:
+			delete(db.fileLookup, v.PathDisplay)
+			delete(db.dirLookup, v.PathDisplay)
+			log.Debugln("Removed item at path", v.PathDisplay)
+		default:
+			log.Errorf("Unhandled change: %+v", v)
+		}
+	}
+	db.Unlock()
+
+	// // also evict parent directory from cache
+	// if len(ms) > 0 {
+	// 	lastSlash := strings.LastIndex(ms[0].PathDisplay, "/")
+	// 	parentPathDisplay := "" // default to root dir
+	// 	if lastSlash > 0 {
+	// 		parentPathDisplay = ms[0].PathDisplay[:lastSlash]
+	// 	}
+	// 	db.Lock()
+	// 	delete(db.dirLookup, parentPathDisplay)
+	// 	db.Unlock()
+	// 	log.Infoln("Evicted parent directory at path", parentPathDisplay)
+	// }
+	// log.Infof("Evicting cursor for path '%s' (%s)\n", path, cursorSHA(c))
+
+	return nil
+}
+
+func (db *Dropbox) getRecursiveCursor(path string) (string, error) {
+	input := files.NewListFolderArg(path)
+	// Debug how to get recursive working vs blocking
+	//input.Recursive = true
+	input.Limit = 2000
+	input.Recursive = true
+	log.Debugln("Getting latest cursor", path)
+	output, err := db.fileClient.ListFolderGetLatestCursor(input)
+	log.Debugf("Got latest cursor %+v\n", output)
+	if err != nil {
+		return "", err
+	}
+	metadata := []*files.Metadata{}
+	db.beginBackgroundPolling(output.Cursor, path, metadata)
+	return output.Cursor, nil
 }
 
 // lock assumed
@@ -343,7 +385,6 @@ func (db *Dropbox) fetchItems(path string) ([]files.IsMetadata, error) {
 		}
 	}
 
-	db.beginBackgroundPolling(output.Cursor, path, metadata)
 	if _, found := db.dirLookup[db.rootDir.Metadata.PathDisplay]; !found {
 		db.dirLookup[db.rootDir.Metadata.PathDisplay] = db.rootDir
 	}
@@ -351,21 +392,36 @@ func (db *Dropbox) fetchItems(path string) ([]files.IsMetadata, error) {
 	return nodes, nil
 }
 
-func (db *Dropbox) listFolderContinueAll(cursor string) ([]*files.Metadata, error) {
+func (db *Dropbox) listFolderAll(cursor string) ([]files.IsMetadata, string, error) {
 	nodes := []files.IsMetadata{}
-	metadata := []*files.Metadata{}
-	nextInput := files.NewListFolderContinueArg(cursor)
-	output, err := db.fileClient.ListFolderContinue(nextInput)
+	arg := files.NewListFolderContinueArg(cursor)
+	log.Debugln("listFolderAll: starting")
+	output, err := db.fileClient.ListFolderContinue(arg)
+	if err != nil {
+		log.Errorln("Error with ListFolderContinue", err)
+		return nil, cursor, err
+	}
+	log.Debugf("listFolderAll: starting result %+v\n", output.Entries)
 	nodes = append(nodes, output.Entries...)
 	for output.HasMore {
-		nextInput := files.NewListFolderContinueArg(output.Cursor)
-		output, err = db.fileClient.ListFolderContinue(nextInput)
+		log.Debugln("listFolderAll: fetching more")
+		arg := files.NewListFolderContinueArg(output.Cursor)
+		output, err = db.fileClient.ListFolderContinue(arg)
 		if err != nil {
-			return metadata, err
+			return nil, cursor, err
 		}
 		nodes = append(nodes, output.Entries...)
 	}
+	return nodes, output.Cursor, nil
+}
 
+func (db *Dropbox) listFolderContinueAll(cursor string) ([]*files.Metadata, string, error) {
+	nodes, c, err := db.listFolderAll(cursor)
+	if err != nil {
+		return nil, cursor, err
+	}
+
+	metadata := []*files.Metadata{}
 	for _, entry := range nodes {
 		switch v := entry.(type) {
 		case *files.FileMetadata:
@@ -376,9 +432,11 @@ func (db *Dropbox) listFolderContinueAll(cursor string) ([]*files.Metadata, erro
 			metadata = append(metadata, &v.Metadata)
 		}
 	}
-	return metadata, nil
+	return metadata, c, nil
 }
 
+// TODO: remove duplication here, if we're fetching data for files and folders
+// by default, then store all of it instead of just File OR Folder
 func (db *Dropbox) ListFiles(d *Directory) ([]*files.FileMetadata, error) {
 	path := d.Metadata.PathDisplay
 	db.Lock()
