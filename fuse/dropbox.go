@@ -17,6 +17,7 @@ import (
 	"bazil.org/fuse/fs"
 	"github.com/dropbox/dropbox-sdk-go-unofficial/dropbox"
 	"github.com/dropbox/dropbox-sdk-go-unofficial/dropbox/files"
+	cmap "github.com/orcaman/concurrent-map"
 )
 
 // Credit: https://gist.github.com/unakatsuo/0dcab7898d092d87a77d684f3e71621b
@@ -108,7 +109,7 @@ type Dropbox struct {
 	fileClient files.Client
 	rootDir    *Directory
 	cache      map[string][]*files.Metadata
-	pathCache  map[string]string
+	pathCache  cmap.ConcurrentMap
 	fileLookup map[string]*File
 	dirLookup  map[string]*Directory
 	sync.Mutex
@@ -119,9 +120,9 @@ func NewDropbox(c files.Client, root *Directory) *Dropbox {
 		fileClient: c,
 		rootDir:    root,
 		cache:      map[string][]*files.Metadata{},
+		pathCache:  cmap.New(),
 		fileLookup: map[string]*File{},
 		dirLookup:  map[string]*Directory{},
-		pathCache:  make(map[string]string),
 	}
 	root.Client = db
 	// Start polling for changes
@@ -228,7 +229,7 @@ func longpoll(c string) (map[string]interface{}, bool) {
 // Long polling reimplemented due to Dropbox Go SDK having broken implementation
 // Source: https://github.com/dropbox/dropbox-sdk-go-unofficial/issues/7
 func (db *Dropbox) beginBackgroundPolling(cursor, path string) {
-	if _, found := db.pathCache[path]; found {
+	if _, found := db.pathCache.Get(path); found {
 		log.Infoln("Polling already running for path ", path)
 		return
 	}
@@ -236,7 +237,7 @@ func (db *Dropbox) beginBackgroundPolling(cursor, path string) {
 		time.Sleep(250 * time.Millisecond)
 	}
 
-	db.pathCache[path] = cursor
+	db.pathCache.Set(path, cursor)
 	log.Infof("Starting polling call on path: '%s' for cursor: %s", path, cursorSHA(cursor))
 	go func(c string) {
 		for {
