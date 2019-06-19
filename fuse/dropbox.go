@@ -25,8 +25,8 @@ type Dropbox struct {
 	rootDir    *Directory
 	cache      map[string][]*files.Metadata
 	pathCache  cmap.ConcurrentMap
-	fileLookup cmap.ConcurrentMap
-	dirLookup  map[string]*Directory
+	fileLookup cmap.ConcurrentMap // map[string]*File
+	dirLookup  cmap.ConcurrentMap // map[string]*Directory
 	sync.Mutex
 }
 
@@ -37,7 +37,7 @@ func NewDropbox(c files.Client, root *Directory) *Dropbox {
 		cache:      map[string][]*files.Metadata{},
 		pathCache:  cmap.New(),
 		fileLookup: cmap.New(),
-		dirLookup:  map[string]*Directory{},
+		dirLookup:  cmap.New(),
 	}
 	root.Client = db
 	// Start polling for changes
@@ -82,15 +82,16 @@ func (db *Dropbox) NewOrCachedFile(metadata *files.FileMetadata) *File {
 func (db *Dropbox) IsDirectoryCached(d *Directory) bool {
 	db.Lock()
 	defer db.Unlock()
-	_, found := db.dirLookup[d.Metadata.PathDisplay]
+	_, found := db.dirLookup.Get(d.Metadata.PathDisplay)
 	return found
 }
 
 func (db *Dropbox) NewOrCachedDirectory(metadata *files.FolderMetadata) *Directory {
 	db.Lock()
 	defer db.Unlock()
-	dir, found := db.dirLookup[metadata.PathDisplay]
+	t, found := db.dirLookup.Get(metadata.PathDisplay)
 	if found {
+		dir := t.(*Directory)
 		log.Debugln("Returning cached dir", metadata.PathDisplay)
 		return dir
 	}
@@ -205,16 +206,16 @@ func (db *Dropbox) applyChanges(nodes []files.IsMetadata) error {
 			db.evictParentFolder(v.PathDisplay)
 			log.Debugln("Added file at path", v.PathDisplay)
 		case *files.FolderMetadata:
-			db.dirLookup[v.PathDisplay] = &Directory{
+			db.dirLookup.Set(v.PathDisplay, &Directory{
 				Metadata: v,
 				Client:   db,
-			}
+			})
 			// TODO: Merge into parent d.Files slice
 			db.evictParentFolder(v.PathDisplay)
 			log.Debugln("Added folder at path", v.PathDisplay)
 		case *files.DeletedMetadata:
 			db.fileLookup.Remove(v.PathDisplay)
-			delete(db.dirLookup, v.PathDisplay)
+			db.dirLookup.Remove(v.PathDisplay)
 			db.evictParentFolder(v.PathDisplay)
 			log.Debugln("Removed item at path", v.PathDisplay)
 		default:
@@ -239,7 +240,7 @@ func (db *Dropbox) evictParentFolder(pathDisplay string) {
 	// TODO: determine correct way to handle this situation
 	// Otherwise the parent is missing/has the added/deleted file
 	parentPathDisplay := db.parentFolder(pathDisplay)
-	delete(db.dirLookup, parentPathDisplay)
+	db.dirLookup.Remove(parentPathDisplay)
 	log.Infoln("Evicted parent directory at path", parentPathDisplay)
 }
 
@@ -296,8 +297,8 @@ func (db *Dropbox) fetchItems(path string) ([]files.IsMetadata, error) {
 		}
 	}
 
-	if _, found := db.dirLookup[db.rootDir.Metadata.PathDisplay]; !found {
-		db.dirLookup[db.rootDir.Metadata.PathDisplay] = db.rootDir
+	if _, found := db.dirLookup.Get(db.rootDir.Metadata.PathDisplay); !found {
+		db.dirLookup.Set(db.rootDir.Metadata.PathDisplay, db.rootDir)
 	}
 
 	return nodes, nil
@@ -363,7 +364,7 @@ func (db *Dropbox) listFilesAndFolders(d *Directory) ([]*files.FileMetadata, []*
 			folderMetadata = append(folderMetadata, v)
 		}
 	}
-	db.dirLookup[path] = d
+	db.dirLookup.Set(path, d)
 	return filesMetadata, folderMetadata, err
 }
 
@@ -409,7 +410,7 @@ func (db *Dropbox) Move(oldPath string, newPath string) (files.IsMetadata, error
 		return nil, err
 	}
 	db.fileLookup.Remove(oldPath)
-	delete(db.dirLookup, oldPath)
+	db.dirLookup.Remove(oldPath)
 	return output.Metadata, nil
 }
 
@@ -422,7 +423,7 @@ func (db *Dropbox) Delete(path string) (files.IsMetadata, error) {
 		return nil, err
 	}
 	db.fileLookup.Remove(path)
-	delete(db.dirLookup, path)
+	db.dirLookup.Remove(path)
 	return output.Metadata, nil
 
 }
@@ -435,7 +436,7 @@ func (db *Dropbox) Mkdir(path string) (*files.FolderMetadata, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.dirLookup[output.Metadata.PathDisplay] = &Directory{Metadata: output.Metadata, Client: db}
+	db.dirLookup.Set(output.Metadata.PathDisplay, &Directory{Metadata: output.Metadata, Client: db})
 	return output.Metadata, nil
 }
 
