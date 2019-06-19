@@ -56,15 +56,11 @@ func (db Dropbox) Root() (fs.Node, error) {
 }
 
 func (db *Dropbox) IsFileCached(f *File) bool {
-	db.Lock()
-	defer db.Unlock()
 	_, found := db.fileLookup.Get(f.Metadata.PathDisplay)
 	return found
 }
 
 func (db *Dropbox) NewOrCachedFile(metadata *files.FileMetadata) *File {
-	db.Lock()
-	defer db.Unlock()
 	if t, found := db.fileLookup.Get(metadata.PathDisplay); found {
 		f := t.(*File)
 		log.Debugln("Returning cached file", metadata.PathDisplay)
@@ -78,15 +74,11 @@ func (db *Dropbox) NewOrCachedFile(metadata *files.FileMetadata) *File {
 }
 
 func (db *Dropbox) IsDirectoryCached(d *Directory) bool {
-	db.Lock()
-	defer db.Unlock()
 	_, found := db.dirLookup.Get(d.Metadata.PathDisplay)
 	return found
 }
 
 func (db *Dropbox) NewOrCachedDirectory(metadata *files.FolderMetadata) *Directory {
-	db.Lock()
-	defer db.Unlock()
 	t, found := db.dirLookup.Get(metadata.PathDisplay)
 	if found {
 		dir := t.(*Directory)
@@ -191,8 +183,6 @@ func (db *Dropbox) beginBackgroundPolling(cursor, path string) {
 }
 
 func (db *Dropbox) applyChanges(nodes []files.IsMetadata) error {
-	db.Lock()
-
 	for _, entry := range nodes {
 		switch v := entry.(type) {
 		case *files.FileMetadata:
@@ -220,7 +210,6 @@ func (db *Dropbox) applyChanges(nodes []files.IsMetadata) error {
 			log.Errorf("Unhandled change: %+v", v)
 		}
 	}
-	db.Unlock()
 	return nil
 }
 
@@ -233,7 +222,6 @@ func (db *Dropbox) parentFolder(pathDisplay string) string {
 }
 
 // TODO: setup background refresh for these folders
-// expected to be called under lock
 func (db *Dropbox) evictParentFolder(pathDisplay string) {
 	// TODO: determine correct way to handle this situation
 	// Otherwise the parent is missing/has the added/deleted file
@@ -349,8 +337,6 @@ func (db *Dropbox) listFolderContinueAll(cursor string) ([]*files.Metadata, stri
 func (db *Dropbox) listFilesAndFolders(d *Directory) ([]*files.FileMetadata, []*files.FolderMetadata, error) {
 	// Can only reliably be called inside ListFiles or ListFolders
 	path := d.Metadata.PathDisplay
-	db.Lock()
-	defer db.Unlock()
 	out, err := db.fetchItems(path)
 	filesMetadata := []*files.FileMetadata{}
 	folderMetadata := []*files.FolderMetadata{}
@@ -377,8 +363,6 @@ func (db *Dropbox) ListFolders(d *Directory) ([]*files.FolderMetadata, error) {
 }
 
 func (db *Dropbox) Upload(path string, data []byte) (*files.FileMetadata, error) {
-	db.Lock()
-	defer db.Unlock()
 	r := bytes.NewReader(data)
 	input := files.NewCommitInfo(path)
 	input.Mute = true // don't send user notification on other clients
@@ -391,18 +375,18 @@ func (db *Dropbox) Upload(path string, data []byte) (*files.FileMetadata, error)
 
 	// if cached update to latest path
 	if cached {
+		db.Lock()
 		db.fileLookup.Remove(path)
 		file := fileT.(*File)
 		file.Metadata = output
 		db.fileLookup.Set(file.Metadata.PathDisplay, file)
+		db.Unlock()
 	}
 	return output, nil
 }
 
 func (db *Dropbox) Move(oldPath string, newPath string) (files.IsMetadata, error) {
 	input := files.NewRelocationArg(oldPath, newPath)
-	db.Lock()
-	defer db.Unlock()
 	output, err := db.fileClient.MoveV2(input)
 	if err != nil {
 		return nil, err
@@ -413,8 +397,6 @@ func (db *Dropbox) Move(oldPath string, newPath string) (files.IsMetadata, error
 }
 
 func (db *Dropbox) Delete(path string) (files.IsMetadata, error) {
-	db.Lock()
-	defer db.Unlock()
 	input := files.NewDeleteArg(path)
 	output, err := db.fileClient.DeleteV2(input)
 	if err != nil {
@@ -427,8 +409,6 @@ func (db *Dropbox) Delete(path string) (files.IsMetadata, error) {
 }
 
 func (db *Dropbox) Mkdir(path string) (*files.FolderMetadata, error) {
-	db.Lock()
-	defer db.Unlock()
 	input := files.NewCreateFolderArg(path)
 	output, err := db.fileClient.CreateFolderV2(input)
 	if err != nil {
@@ -439,8 +419,6 @@ func (db *Dropbox) Mkdir(path string) (*files.FolderMetadata, error) {
 }
 
 func (db *Dropbox) Download(path string) ([]byte, error) {
-	db.Lock()
-	defer db.Unlock()
 	input := files.NewDownloadArg(path)
 	_, content, err := db.fileClient.Download(input)
 	if err != nil {
