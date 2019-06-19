@@ -25,7 +25,7 @@ type Dropbox struct {
 	rootDir    *Directory
 	cache      map[string][]*files.Metadata
 	pathCache  cmap.ConcurrentMap
-	fileLookup map[string]*File
+	fileLookup cmap.ConcurrentMap
 	dirLookup  map[string]*Directory
 	sync.Mutex
 }
@@ -36,7 +36,7 @@ func NewDropbox(c files.Client, root *Directory) *Dropbox {
 		rootDir:    root,
 		cache:      map[string][]*files.Metadata{},
 		pathCache:  cmap.New(),
-		fileLookup: map[string]*File{},
+		fileLookup: cmap.New(),
 		dirLookup:  map[string]*Directory{},
 	}
 	root.Client = db
@@ -60,15 +60,15 @@ func (db Dropbox) Root() (fs.Node, error) {
 func (db *Dropbox) IsFileCached(f *File) bool {
 	db.Lock()
 	defer db.Unlock()
-	_, found := db.fileLookup[f.Metadata.PathDisplay]
+	_, found := db.fileLookup.Get(f.Metadata.PathDisplay)
 	return found
 }
 
 func (db *Dropbox) NewOrCachedFile(metadata *files.FileMetadata) *File {
 	db.Lock()
 	defer db.Unlock()
-	f, found := db.fileLookup[metadata.PathDisplay]
-	if found {
+	if t, found := db.fileLookup.Get(metadata.PathDisplay); found {
+		f := t.(*File)
 		log.Debugln("Returning cached file", metadata.PathDisplay)
 		return f
 	}
@@ -197,10 +197,10 @@ func (db *Dropbox) applyChanges(nodes []files.IsMetadata) error {
 	for _, entry := range nodes {
 		switch v := entry.(type) {
 		case *files.FileMetadata:
-			db.fileLookup[v.PathDisplay] = &File{
+			db.fileLookup.Set(v.PathDisplay, &File{
 				Metadata: v,
 				Client:   db,
-			}
+			})
 			// TODO: Merge into parent d.Files slice
 			db.evictParentFolder(v.PathDisplay)
 			log.Debugln("Added file at path", v.PathDisplay)
@@ -213,7 +213,7 @@ func (db *Dropbox) applyChanges(nodes []files.IsMetadata) error {
 			db.evictParentFolder(v.PathDisplay)
 			log.Debugln("Added folder at path", v.PathDisplay)
 		case *files.DeletedMetadata:
-			delete(db.fileLookup, v.PathDisplay)
+			db.fileLookup.Remove(v.PathDisplay)
 			delete(db.dirLookup, v.PathDisplay)
 			db.evictParentFolder(v.PathDisplay)
 			log.Debugln("Removed item at path", v.PathDisplay)
@@ -388,13 +388,14 @@ func (db *Dropbox) Upload(path string, data []byte) (*files.FileMetadata, error)
 	if err != nil {
 		return nil, err
 	}
-	file, cached := db.fileLookup[path]
+	fileT, cached := db.fileLookup.Get(path)
 
 	// if cached update to latest path
 	if cached {
-		delete(db.fileLookup, path)
+		db.fileLookup.Remove(path)
+		file := fileT.(*File)
 		file.Metadata = output
-		db.fileLookup[file.Metadata.PathDisplay] = file
+		db.fileLookup.Set(file.Metadata.PathDisplay, file)
 	}
 	return output, nil
 }
@@ -407,7 +408,7 @@ func (db *Dropbox) Move(oldPath string, newPath string) (files.IsMetadata, error
 	if err != nil {
 		return nil, err
 	}
-	delete(db.fileLookup, oldPath)
+	db.fileLookup.Remove(oldPath)
 	delete(db.dirLookup, oldPath)
 	return output.Metadata, nil
 }
@@ -420,7 +421,7 @@ func (db *Dropbox) Delete(path string) (files.IsMetadata, error) {
 	if err != nil {
 		return nil, err
 	}
-	delete(db.fileLookup, path)
+	db.fileLookup.Remove(path)
 	delete(db.dirLookup, path)
 	return output.Metadata, nil
 
