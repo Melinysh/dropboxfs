@@ -23,8 +23,7 @@ import (
 type Dropbox struct {
 	fileClient files.Client
 	rootDir    *Directory
-	cache      map[string][]*files.Metadata
-	pathCache  cmap.ConcurrentMap
+	pathCache  cmap.ConcurrentMap // map[string]string
 	fileLookup cmap.ConcurrentMap // map[string]*File
 	dirLookup  cmap.ConcurrentMap // map[string]*Directory
 	sync.Mutex
@@ -34,7 +33,6 @@ func NewDropbox(c files.Client, root *Directory) *Dropbox {
 	db := &Dropbox{
 		fileClient: c,
 		rootDir:    root,
-		cache:      map[string][]*files.Metadata{},
 		pathCache:  cmap.New(),
 		fileLookup: cmap.New(),
 		dirLookup:  cmap.New(),
