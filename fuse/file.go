@@ -58,8 +58,6 @@ func (f *File) getData() []byte {
 }
 
 func (f *File) setData(data []byte) {
-	f.Lock()
-	defer f.Unlock()
 	f.Data = data
 }
 
