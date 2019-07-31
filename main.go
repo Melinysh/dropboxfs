@@ -40,6 +40,7 @@ func main() {
 	}
 	logLevel := dropbox.LogOff
 	if *verbosePtr {
+		// Enable for verbose dropbox logging.
 		//logLevel = dropbox.LogDebug
 		log.SetLevel(log.DebugLevel)
 	}
@@ -77,6 +78,7 @@ func main() {
 	if err != nil {
 		log.Fatalln("Unable to open token file", *tokenFilePtr, err)
 	}
+
 	// Files properly end in \n, trim this off to avoid auth issues.
 	token := string(bytes.TrimSpace(tokenData))
 

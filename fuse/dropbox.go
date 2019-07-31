@@ -160,7 +160,7 @@ func (db *Dropbox) beginBackgroundPolling(cursor, path string) {
 				nodes, cursor, err := db.listFolderAll(c)
 				log.Debugf("Nodes %+v", nodes)
 				if err != nil {
-					log.Errorln("Error fetching Dropbox changes %s", err)
+					log.Errorf("Error fetching Dropbox changes %s\n", err)
 					continue
 				}
 				err = db.applyChanges(nodes)
@@ -429,6 +429,7 @@ func (db *Dropbox) Download(path string) ([]byte, error) {
 }
 
 // Credit: https://gist.github.com/unakatsuo/0dcab7898d092d87a77d684f3e71621b
+// Cursor api calls do not use auth headers because it's baked into the cursor itself.
 type noauthTransport struct {
 	http.Transport
 }
@@ -444,40 +445,11 @@ func newNoAuthClient() *http.Client {
 	}
 }
 
-func (db *Dropbox) ListAndFolderPoll(folderPath string) error {
-	config := dropbox.Config{
-		Token: "your secret",
-	}
-	dbx := files.New(config)
-	reqListFolder := files.NewListFolderArg(folderPath)
-	res, err := dbx.ListFolder(reqListFolder)
-	if err != nil {
-		return err
-	}
-	cursor := res.Cursor
-	log.Printf("Start to poll '%s'", folderPath)
-	for {
-		noauthdbx := files.New(dropbox.Config{Client: newNoAuthClient()})
-		req := files.NewListFolderLongpollArg(cursor)
-		res, err := noauthdbx.ListFolderLongpoll(req)
-		if err != nil {
-			return err
-		}
-		if !res.Changes {
-			continue
-		}
-		log.Print("There is a change")
-		res2, err := dbx.ListFolderGetLatestCursor(reqListFolder)
-		if err != nil {
-			return err
-		}
-		cursor = res2.Cursor
-	}
-	return nil
-}
-
 // End credit
 
+// TODO: switch this fn in for existing folder polling method
+// this uses the existing dropbox sdk with noAuth shim instead of needing
+// to roll our own with http client.
 func (db *Dropbox) FolderPoll(cursor string, c chan []files.IsMetadata) error {
 	for {
 		noauthdbx := files.New(dropbox.Config{Client: newNoAuthClient()})
@@ -510,5 +482,4 @@ func (db *Dropbox) FolderPoll(cursor string, c chan []files.IsMetadata) error {
 		}
 		cursor = res2.Cursor
 	}
-	return nil
 }
